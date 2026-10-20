@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+
+# Modelos e dados locais (baixados ou gravados, nunca versionados)
+models/
+data/
+*.pt
+*.onnx
+*.sqlite
+*.db
+
+# Sistema / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.env
+*.tsbuildinfo
