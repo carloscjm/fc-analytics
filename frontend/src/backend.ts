@@ -60,7 +60,8 @@ export type ServerMessage =
   | StatusMessage
   | BenchmarkMessage;
 
-export const WS_URL: string = import.meta.env.VITE_BACKEND_WS ?? "ws://localhost:8000/ws";
+export const WS_URL: string =
+  import.meta.env.VITE_BACKEND_WS ?? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
 const PING_EVERY_MS = 2000;
 
 type Listener<T> = (value: T) => void;
