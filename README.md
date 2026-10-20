@@ -2,7 +2,7 @@
 
 Analisador de futebol ao vivo que roda 100% no seu PC. Ele captura a aba do navegador com o jogo, detecta jogadores e bola, projeta tudo num mapa 3D visto de cima e gera estatísticas e insights em tempo real, sem nenhum serviço pago.
 
-**Status:** Fase 0 (ambiente). Backend e frontend sobem e conversam por WebSocket.
+**Status:** Fase 1 (captura e detecção). A página captura a aba do jogo, envia frames ao backend e desenha as caixas de jogadores e bola sobre o vídeo, com fps e atraso medidos ao vivo.
 
 ## Estrutura
 
@@ -29,12 +29,28 @@ Hardware de referência: RTX 4060 8 GB (cenário A do planejamento).
 ## Como rodar
 
 1. Na primeira vez, dê dois cliques em `instalar-ferramentas.bat` e depois em `instalar.bat`.
+   Se você já tinha rodado o `instalar.bat` na Fase 0, rode de novo: agora ele instala o PyTorch com CUDA e o YOLO.
 2. Dê dois cliques em `iniciar.bat`. O navegador abre em `http://localhost:5173`.
-3. O cartão "Conexão com o backend" deve mostrar **conectado** e a latência em ms.
+3. Abra o jogo (ou o trecho no YouTube) em outra aba e clique em **Escolher aba**.
+4. Para ver as caixas enquanto assiste, deixe a página do FC Analytics numa janela separada, ao lado do jogo.
+
+## Como a Fase 1 funciona
+
+- A página captura a aba com `getDisplayMedia` e, a cada 100 a 200 ms (você escolhe), reduz o frame para até 1280×720 e envia como JPEG.
+- Cada pacote leva um cabeçalho de 12 bytes (id do frame e momento da captura) e depois o JPEG. O formato está em `backend/app/protocol.py`.
+- Só um frame fica em processamento por vez. Se o anterior ainda não voltou, o próximo é pulado, para o atraso não crescer.
+- O temporizador roda num Web Worker, então continua no ritmo certo mesmo com a página em segundo plano.
+- O backend roda o YOLO26 na GPU (meia precisão) e devolve as caixas. O painel mostra fps de análise, atraso médio e p95, tempo de inferência e frames pulados.
+
+## Escolher o tamanho do modelo
+
+No painel, clique em **Medir modelos** com a captura ligada. O backend mede o YOLO26 n, s, m, l e x nos frames reais do jogo e recomenda o maior que fica abaixo de 50 ms no p95. Esse limite deixa folga para o tracking e a detecção do campo das próximas fases. Na primeira medição, os modelos que faltam são baixados para `backend/models/` (cerca de 200 MB no total).
+
+Os modelos oficiais são treinados no COCO e detectam "pessoa" e "bola". Um modelo treinado em futebol (classes jogador, goleiro, árbitro, bola) pode ser colocado como arquivo `.pt` em `backend/models/`; ele aparece sozinho na lista de modelos.
 
 ## Testes
 
-Com o ambiente do backend ativo: `pytest` dentro de `backend/`.
+Com o ambiente do backend ativo: `pytest` dentro de `backend/`. O teste `test_detector.py` roda o YOLO de verdade numa foto de exemplo (baixa o `yolo26n.pt` na primeira vez).
 
 ## Trechos para teste offline
 

@@ -1,2 +1,6 @@
 fastapi>=0.115
 uvicorn[standard]>=0.30
+numpy>=1.26
+opencv-python>=4.9
+# O PyTorch com CUDA é instalado antes, pelo instalar.bat, a partir do índice oficial do PyTorch.
+ultralytics>=8.4.183

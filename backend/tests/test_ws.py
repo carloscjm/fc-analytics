@@ -1,34 +1,156 @@
+"""Testes do canal WebSocket com um detector falso (não precisa de GPU nem de modelo)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import cv2
+import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.protocol import build_frame
 
-client = TestClient(app)
+
+@dataclass
+class FakeBox:
+    def to_json(self):
+        return {"b": [10, 20, 30, 60], "c": 0.9, "l": "pessoa"}
 
 
-def test_health():
+@dataclass
+class FakeResult:
+    boxes: list
+    width: int
+    height: int
+    infer_ms: float
+
+
+class FakeDetector:
+    device_name = "Teste"
+    imgsz = 960
+
+    def __init__(self):
+        self.model_name = "yolo26s.pt"
+        self.seen_shapes = []
+
+    def available_models(self):
+        return ["yolo26n.pt", "yolo26s.pt"]
+
+    def ensure_model(self):
+        pass
+
+    def set_model(self, name):
+        if name not in self.available_models():
+            raise ValueError("modelo desconhecido")
+        self.model_name = name
+
+    def set_imgsz(self, imgsz):
+        if imgsz not in (640, 960, 1280):
+            raise ValueError("resolução inválida")
+        self.imgsz = imgsz
+
+    def detect(self, image):
+        self.seen_shapes.append(image.shape)
+        return FakeResult(boxes=[FakeBox()], width=image.shape[1], height=image.shape[0], infer_ms=5.0)
+
+    def benchmark(self, frames):
+        return {"rows": [{"model": "yolo26n.pt", "meanMs": 5.0, "p95Ms": 6.0, "fps": 200.0}],
+                "imgsz": self.imgsz, "budgetMs": 50.0, "frames": len(frames),
+                "recommended": "yolo26n.pt", "device": self.device_name}
+
+
+def jpeg(width=1280, height=720) -> bytes:
+    ok, buf = cv2.imencode(".jpg", np.full((height, width, 3), 80, dtype=np.uint8))
+    assert ok
+    return buf.tobytes()
+
+
+@pytest.fixture
+def client():
+    app.state.detector = FakeDetector()
+    with TestClient(app) as c:
+        yield c
+    del app.state.detector
+
+
+def open_ws(client):
+    ws = client.websocket_connect("/ws")
+    conn = ws.__enter__()
+    assert conn.receive_json()["type"] == "hello"
+    status = conn.receive_json()
+    assert status["type"] == "status"
+    return ws, conn, status
+
+
+def test_health(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
 
-def test_ws_ping_pong_and_frame_ack():
-    with client.websocket_connect("/ws") as ws:
-        hello = ws.receive_json()
-        assert hello["type"] == "hello"
-
-        ws.send_json({"type": "ping", "clientTs": 123})
-        pong = ws.receive_json()
-        assert pong["type"] == "pong"
-        assert pong["clientTs"] == 123
-
-        ws.send_bytes(b"\xff\xd8fake-jpeg")
-        ack = ws.receive_json()
-        assert ack["type"] == "frame_ack"
-        assert ack["bytes"] == 11
+def test_status_on_connect(client):
+    ws, conn, status = open_ws(client)
+    assert status["model"] == "yolo26s.pt"
+    assert status["models"] == ["yolo26n.pt", "yolo26s.pt"]
+    assert status["device"] == "Teste"
+    ws.__exit__(None, None, None)
 
 
-def test_ws_rejects_invalid_json():
-    with client.websocket_connect("/ws") as ws:
-        ws.receive_json()
-        ws.send_text("isso não é json")
-        assert ws.receive_json()["type"] == "error"
+def test_frame_returns_detections_with_ids(client):
+    ws, conn, _ = open_ws(client)
+    conn.send_bytes(build_frame(7, 1234.5, jpeg()))
+    msg = conn.receive_json()
+    assert msg["type"] == "detections"
+    assert msg["frameId"] == 7
+    assert msg["captureTs"] == 1234.5
+    assert (msg["width"], msg["height"]) == (1280, 720)
+    assert msg["boxes"] == [{"b": [10, 20, 30, 60], "c": 0.9, "l": "pessoa"}]
+    assert msg["inferMs"] == 5.0
+    ws.__exit__(None, None, None)
+
+
+def test_invalid_frame_is_reported(client):
+    ws, conn, _ = open_ws(client)
+    conn.send_bytes(build_frame(1, 0.0, b"nao-e-jpeg"))
+    assert conn.receive_json()["type"] == "error"
+    ws.__exit__(None, None, None)
+
+
+def test_switch_model_and_imgsz(client):
+    ws, conn, _ = open_ws(client)
+    conn.send_json({"type": "set_model", "name": "yolo26n.pt"})
+    assert conn.receive_json()["state"] == "carregando"
+    assert conn.receive_json()["model"] == "yolo26n.pt"
+
+    conn.send_json({"type": "set_imgsz", "imgsz": 1280})
+    assert conn.receive_json()["imgsz"] == 1280
+
+    conn.send_json({"type": "set_model", "name": "nao-existe.pt"})
+    conn.receive_json()
+    assert conn.receive_json()["state"] == "erro"
+    ws.__exit__(None, None, None)
+
+
+def test_benchmark_uses_received_frames(client):
+    ws, conn, _ = open_ws(client)
+    for i in range(3):
+        conn.send_bytes(build_frame(i, float(i), jpeg()))
+        conn.receive_json()
+    conn.send_json({"type": "benchmark"})
+    assert conn.receive_json()["state"] == "medindo"
+    report = conn.receive_json()
+    assert report["type"] == "benchmark"
+    assert report["frames"] == 3
+    assert report["recommended"] == "yolo26n.pt"
+    ws.__exit__(None, None, None)
+
+
+def test_ping_pong(client):
+    ws, conn, _ = open_ws(client)
+    conn.send_json({"type": "ping", "clientTs": 99})
+    pong = conn.receive_json()
+    assert pong["type"] == "pong"
+    assert pong["clientTs"] == 99
+    ws.__exit__(None, None, None)

@@ -36,6 +36,17 @@ def main() -> int:
     print(f"GPU NVIDIA: {gpu or 'não encontrada (instale o driver NVIDIA mais recente)'}")
     ok &= gpu is not None
 
+    try:
+        import torch
+
+        cuda = torch.cuda.is_available()
+        detail = torch.cuda.get_device_name(0) if cuda else "sem CUDA (vai rodar na CPU)"
+        print(f"PyTorch: {torch.__version__} | {detail}")
+        ok &= cuda or gpu is None
+    except ImportError:
+        print("PyTorch: não instalado (rode o instalar.bat)")
+        ok = False
+
     node = run(["node", "--version"])
     print(f"Node.js: {node or 'não encontrado'}")
     ok &= node is not None
