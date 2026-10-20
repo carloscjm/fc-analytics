@@ -9,8 +9,9 @@ Analisador de futebol ao vivo que roda 100% no seu PC. Ele captura a aba do nave
 ```
 backend/    Python + FastAPI: pipeline de análise (detecção, tracking, campo, estatísticas, insights)
 frontend/   React + Vite + TypeScript: captura da aba, mapa 3D e painéis
-instalar.bat  instala as dependências (Windows)
-iniciar.bat   abre backend, frontend e o navegador (Windows)
+instalar-ferramentas.bat  instala Python, Node.js, Git e Ollama pelo winget (Windows)
+instalar.bat              instala as dependências do projeto (Windows)
+iniciar.bat               abre backend, frontend e o navegador (Windows)
 ```
 
 ## Pré-requisitos (Windows)
@@ -27,7 +28,7 @@ Hardware de referência: RTX 4060 8 GB (cenário A do planejamento).
 
 ## Como rodar
 
-1. Dê dois cliques em `instalar.bat` (só na primeira vez).
+1. Na primeira vez, dê dois cliques em `instalar-ferramentas.bat` e depois em `instalar.bat`.
 2. Dê dois cliques em `iniciar.bat`. O navegador abre em `http://localhost:5173`.
 3. O cartão "Conexão com o backend" deve mostrar **conectado** e a latência em ms.
 
