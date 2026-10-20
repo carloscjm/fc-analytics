@@ -147,6 +147,31 @@ def test_benchmark_uses_received_frames(client):
     ws.__exit__(None, None, None)
 
 
+def test_benchmark_from_another_tab_uses_capture_frames_and_reaches_both(client):
+    capture_ws, capture, _ = open_ws(client)
+    for i in range(2):
+        capture.send_bytes(build_frame(i, float(i), jpeg()))
+        capture.receive_json()
+
+    other_ws, other, _ = open_ws(client)
+    other.send_json({"type": "benchmark"})
+
+    for conn in (other, capture):
+        assert conn.receive_json()["state"] == "medindo"
+        report = conn.receive_json()
+        assert report["type"] == "benchmark"
+        assert report["frames"] == 2
+        assert conn.receive_json()["state"] == "pronto"
+
+    other.send_json({"type": "set_model", "name": "yolo26n.pt"})
+    for conn in (other, capture):
+        assert conn.receive_json()["state"] == "carregando"
+        assert conn.receive_json()["model"] == "yolo26n.pt"
+
+    other_ws.__exit__(None, None, None)
+    capture_ws.__exit__(None, None, None)
+
+
 def test_ping_pong(client):
     ws, conn, _ = open_ws(client)
     conn.send_json({"type": "ping", "clientTs": 99})

@@ -55,6 +55,10 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "detector"):
         app.state.detector = create_detector()
     app.state.model_ready = asyncio.Event()
+    # Compartilhados entre conexões: a medição disparada de qualquer aba usa os
+    # frames reais da captura, e mudanças de modelo aparecem em todas as abas.
+    app.state.recent_frames = deque(maxlen=20)
+    app.state.clients = set()
 
     async def warm() -> None:
         try:
@@ -83,6 +87,21 @@ def now_ms() -> float:
     return time.time() * 1000
 
 
+async def send(websocket: WebSocket, message: dict[str, Any]) -> None:
+    """Envia JSON com uma trava por conexão, para envios de tarefas diferentes não se misturarem."""
+    lock = websocket.scope.setdefault("fca_send_lock", asyncio.Lock())
+    async with lock:
+        await websocket.send_json(message)
+
+
+async def broadcast(app: FastAPI, message: dict[str, Any]) -> None:
+    for client in list(app.state.clients):
+        try:
+            await send(client, message)
+        except Exception:  # noqa: BLE001 - conexão já fechada
+            app.state.clients.discard(client)
+
+
 def status_message(detector: DetectorLike, state: str = "pronto", detail: str | None = None) -> dict[str, Any]:
     from .detector import IMGSZ_OPTIONS
 
@@ -107,16 +126,23 @@ def health() -> dict:
 async def ws_endpoint(websocket: WebSocket) -> None:
     detector: DetectorLike = websocket.app.state.detector
     await websocket.accept()
-    await websocket.send_json({"type": "hello", "version": VERSION, "serverTs": now_ms()})
+    await send(websocket, {"type": "hello", "version": VERSION, "serverTs": now_ms()})
 
     ready: asyncio.Event = websocket.app.state.model_ready
     if not ready.is_set():
-        await websocket.send_json(status_message(detector, "carregando", "Carregando o modelo de detecção..."))
+        await send(websocket, status_message(detector, "carregando", "Carregando o modelo de detecção..."))
         await ready.wait()
-    await websocket.send_json(status_message(detector))
+    await send(websocket, status_message(detector))
 
-    recent_frames: deque[np.ndarray] = deque(maxlen=20)
+    recent_frames: deque[np.ndarray] = websocket.app.state.recent_frames
+    websocket.app.state.clients.add(websocket)
+    try:
+        await _serve(websocket, detector, recent_frames)
+    finally:
+        websocket.app.state.clients.discard(websocket)
 
+
+async def _serve(websocket: WebSocket, detector: DetectorLike, recent_frames: deque[np.ndarray]) -> None:
     while True:
         message = await websocket.receive()
         if message["type"] == "websocket.disconnect":
@@ -132,7 +158,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
         try:
             data = json.loads(text)
         except json.JSONDecodeError:
-            await websocket.send_json({"type": "error", "detail": "JSON inválido"})
+            await send(websocket, {"type": "error", "detail": "JSON inválido"})
             continue
 
         await handle_command(websocket, detector, data, recent_frames)
@@ -146,7 +172,7 @@ async def handle_frame(
         packet = parse_frame(raw)
         image = await asyncio.to_thread(decode, packet.jpeg)
     except (FrameFormatError, ValueError) as exc:
-        await websocket.send_json({"type": "error", "detail": f"frame inválido: {exc}"})
+        await send(websocket, {"type": "error", "detail": f"frame inválido: {exc}"})
         return
     decode_ms = (time.perf_counter() - received) * 1000
     recent_frames.append(image)
@@ -155,12 +181,14 @@ async def handle_frame(
         result = await asyncio.to_thread(detector.detect, image)
     except Exception as exc:  # noqa: BLE001
         log.exception("falha na detecção")
-        await websocket.send_json(
+        await send(
+            websocket,
             {"type": "detections", "frameId": packet.frame_id, "captureTs": packet.capture_ts, "error": str(exc)}
         )
         return
 
-    await websocket.send_json(
+    await send(
+        websocket,
         {
             "type": "detections",
             "frameId": packet.frame_id,
@@ -183,38 +211,39 @@ async def handle_command(
     kind = data.get("type")
 
     if kind == "ping":
-        await websocket.send_json({"type": "pong", "clientTs": data.get("clientTs"), "serverTs": now_ms()})
+        await send(websocket, {"type": "pong", "clientTs": data.get("clientTs"), "serverTs": now_ms()})
 
     elif kind == "set_model":
         name = str(data.get("name"))
-        await websocket.send_json(status_message(detector, "carregando", f"Carregando {name}..."))
+        await broadcast(websocket.app, status_message(detector, "carregando", f"Carregando {name}..."))
         try:
             await asyncio.to_thread(detector.set_model, name)
         except Exception as exc:  # noqa: BLE001
-            await websocket.send_json(status_message(detector, "erro", f"Não foi possível carregar {name}: {exc}"))
+            await broadcast(websocket.app, status_message(detector, "erro", f"Não foi possível carregar {name}: {exc}"))
             return
-        await websocket.send_json(status_message(detector))
+        await broadcast(websocket.app, status_message(detector))
 
     elif kind == "set_imgsz":
         try:
             detector.set_imgsz(int(data.get("imgsz", 0)))
         except ValueError as exc:
-            await websocket.send_json(status_message(detector, "erro", str(exc)))
+            await broadcast(websocket.app, status_message(detector, "erro", str(exc)))
             return
-        await websocket.send_json(status_message(detector))
+        await broadcast(websocket.app, status_message(detector))
 
     elif kind == "benchmark":
-        await websocket.send_json(
+        await broadcast(
+            websocket.app,
             status_message(detector, "medindo", "Medindo os modelos (na primeira vez, baixa os que faltam)...")
         )
         frames = list(recent_frames)
         try:
             report = await asyncio.to_thread(detector.benchmark, frames)
         except Exception as exc:  # noqa: BLE001
-            await websocket.send_json(status_message(detector, "erro", f"Falha na medição: {exc}"))
+            await broadcast(websocket.app, status_message(detector, "erro", f"Falha na medição: {exc}"))
             return
-        await websocket.send_json({"type": "benchmark", **report})
-        await websocket.send_json(status_message(detector))
+        await broadcast(websocket.app, {"type": "benchmark", **report})
+        await broadcast(websocket.app, status_message(detector))
 
     else:
-        await websocket.send_json({"type": "error", "detail": f"tipo desconhecido: {kind!r}"})
+        await send(websocket, {"type": "error", "detail": f"tipo desconhecido: {kind!r}"})
