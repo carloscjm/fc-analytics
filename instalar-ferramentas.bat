@@ -22,7 +22,7 @@ if not %errorlevel%==0 (
   exit /b 1
 )
 
-set "WG=winget install --exact --silent --accept-package-agreements --accept-source-agreements"
+set "WG=winget install --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements"
 
 call :instalar "Python 3.12" Python.Python.3.12
 call :instalar "Node.js LTS" OpenJS.NodeJS.LTS
@@ -47,7 +47,8 @@ exit /b 0
 :instalar
 echo.
 echo --- %~1 ---
-winget list --exact --id %2 >nul 2>nul
+echo Verificando se ja esta instalado (na primeira vez o winget pode levar 1 a 2 minutos)...
+winget list --exact --id %2 --accept-source-agreements --disable-interactivity >nul 2>nul
 if %errorlevel%==0 (
   echo Ja instalado.
   exit /b 0
