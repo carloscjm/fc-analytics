@@ -180,3 +180,16 @@ def test_ping_pong(client):
     assert pong["type"] == "pong"
     assert pong["clientTs"] == 99
     ws.__exit__(None, None, None)
+
+
+def test_debug_endpoints_show_last_frame(client):
+    assert client.get("/debug/state").json()["frames"] is False
+    assert client.get("/debug/snapshot.jpg").status_code == 404
+    ws, conn, _ = open_ws(client)
+    conn.send_bytes(build_frame(1, 1000.0, jpeg()))
+    conn.receive_json()
+    state = client.get("/debug/state").json()
+    assert state["frames"] is True and state["teams"]["state"] == "calibrando"
+    snap = client.get("/debug/snapshot.jpg")
+    assert snap.status_code == 200 and snap.content[:2] == b"\xff\xd8"
+    ws.__exit__(None, None, None)

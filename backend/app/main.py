@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Protocol
 
 import numpy as np
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from .protocol import FrameFormatError, parse_frame
@@ -79,6 +79,9 @@ async def lifespan(app: FastAPI):
     # frames reais da captura, e mudanças de modelo aparecem em todas as abas.
     app.state.recent_frames = deque(maxlen=20)
     app.state.clients = set()
+    # Último frame analisado, para a página de diagnóstico (/debug).
+    app.state.last_frame = None
+    app.state.result_times = deque(maxlen=60)
 
     async def warm() -> None:
         try:
@@ -143,6 +146,70 @@ def status_message(detector: DetectorLike, state: str = "pronto", detail: str | 
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "version": VERSION}
+
+
+@app.get("/debug/state")
+def debug_state() -> dict:
+    """Resumo do último frame analisado: times, tracking, contagens e fps."""
+    last = app.state.last_frame
+    times = list(app.state.result_times)
+    fps = (len(times) - 1) / (times[-1] - times[0]) if len(times) > 1 and times[-1] > times[0] else 0.0
+    if last is None:
+        return {"frames": False, "fps": 0.0}
+    _, message, received = last
+    roles: dict[str, int] = {}
+    for box in message["boxes"]:
+        key = f"time {'AB'[box['t']]}" if box.get("t") in (0, 1) else box["l"]
+        roles[key] = roles.get(key, 0) + 1
+    return {
+        "frames": True,
+        "ageS": round(time.time() - received, 1),
+        "fps": round(fps, 1),
+        "model": message.get("model"),
+        "inferMs": message.get("inferMs"),
+        "trackMs": message.get("trackMs"),
+        "serverMs": message.get("serverMs"),
+        "teams": message.get("teams"),
+        "tracking": message.get("tracking"),
+        "roles": roles,
+        "ids": sorted(b["id"] for b in message["boxes"] if b.get("id") is not None),
+    }
+
+
+@app.get("/debug/snapshot.jpg")
+def debug_snapshot() -> Response:
+    """Último frame com as caixas desenhadas na cor de cada time."""
+    import cv2
+
+    last = app.state.last_frame
+    if last is None:
+        return Response(status_code=404)
+    image, message, _ = last
+    canvas = image.copy()
+    teams = message.get("teams") or {}
+    colors = teams.get("colors") or ["#f5f5f5", "#3b82f6"]
+
+    def bgr(hex_color: str) -> tuple[int, int, int]:
+        n = int(hex_color[1:], 16)
+        return (n & 255, (n >> 8) & 255, (n >> 16) & 255)
+
+    role_colors = {"bola": (21, 204, 250), "goleiro": (247, 85, 168), "árbitro": (11, 158, 245),
+                   "árbitro/goleiro": (11, 158, 245), "pessoa": (175, 163, 156)}
+    for box in message["boxes"]:
+        x1, y1, x2, y2 = box["b"]
+        color = bgr(colors[box["t"]]) if box.get("t") in (0, 1) else role_colors.get(box["l"], (235, 231, 229))
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 4)
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+        tag = {"bola": "bola", "goleiro": "GOL", "árbitro": "ARB", "árbitro/goleiro": "ARB/GOL"}.get(box["l"], "")
+        if box.get("id") is not None:
+            tag = f"{tag} {box['id']}".strip()
+        if box.get("e"):
+            tag = "bola?"
+        if tag:
+            cv2.putText(canvas, tag, (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3)
+            cv2.putText(canvas, tag, (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+    ok, buf = cv2.imencode(".jpg", canvas, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return Response(content=buf.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.websocket("/ws")
@@ -215,9 +282,7 @@ async def handle_frame(
         )
         return
 
-    await send(
-        websocket,
-        {
+    message = {
             "type": "detections",
             "frameId": packet.frame_id,
             "captureTs": packet.capture_ts,
@@ -233,7 +298,9 @@ async def handle_frame(
             "teams": tracked["teams"],
             "tracking": tracked["tracking"],
         }
-    )
+    websocket.app.state.last_frame = (image, message, time.time())
+    websocket.app.state.result_times.append(time.time())
+    await send(websocket, message)
 
 
 async def handle_command(
