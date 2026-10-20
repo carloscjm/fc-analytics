@@ -4,3 +4,6 @@ numpy>=1.26
 opencv-python>=4.9
 # O PyTorch com CUDA é instalado antes, pelo instalar.bat, a partir do índice oficial do PyTorch.
 ultralytics>=8.4.183
+supervision>=0.31
+trackers>=2.6
+gdown>=5.2

@@ -5,7 +5,27 @@ export type ConnStatus = "conectando" | "conectado" | "desconectado";
 export interface WireBox {
   b: [number, number, number, number];
   c: number;
+  /** papel: jogador, goleiro, árbitro, árbitro/goleiro, pessoa ou bola */
   l: string;
+  /** ID do tracking (null enquanto o tracking ainda não confirmou) */
+  id?: number | null;
+  /** time 0 ou 1 */
+  t?: number | null;
+  /** bola estimada (não detectada neste frame) */
+  e?: boolean;
+}
+
+export interface TeamsInfo {
+  state: "calibrando" | "pronto";
+  progress: number;
+  colors: [string, string] | null;
+  counts: { "0": number; "1": number };
+}
+
+export interface TrackingInfo {
+  active: number;
+  newLastMinute: number;
+  avgLifeS: number | null;
 }
 
 export interface DetectionsMessage {
@@ -17,9 +37,12 @@ export interface DetectionsMessage {
   decodeMs?: number;
   inferMs?: number;
   serverMs?: number;
+  trackMs?: number;
   model?: string;
   imgsz?: number;
   boxes?: WireBox[];
+  teams?: TeamsInfo;
+  tracking?: TrackingInfo;
   error?: string;
 }
 
@@ -32,6 +55,7 @@ export interface StatusMessage {
   imgsz: number;
   imgszOptions: number[];
   device: string;
+  footballModel: boolean;
 }
 
 export interface BenchmarkRow {

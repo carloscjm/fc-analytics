@@ -1,16 +1,48 @@
 import { useEffect, useRef } from "react";
-import type { DetectionsMessage } from "./backend";
+import type { DetectionsMessage, WireBox } from "./backend";
 
-export const LABEL_COLORS: Record<string, string> = {
-  pessoa: "#22c55e",
+export const FALLBACK_TEAM_COLORS: [string, string] = ["#f5f5f5", "#3b82f6"];
+export const ROLE_COLORS: Record<string, string> = {
+  pessoa: "#9ca3af",
   jogador: "#22c55e",
   goleiro: "#a855f7",
   "árbitro": "#f59e0b",
+  "árbitro/goleiro": "#f59e0b",
   bola: "#facc15",
 };
 
-function colorFor(label: string): string {
-  return LABEL_COLORS[label] ?? "#e5e7eb";
+export function teamColors(result: DetectionsMessage | null): [string, string] {
+  return result?.teams?.colors ?? FALLBACK_TEAM_COLORS;
+}
+
+function colorFor(box: WireBox, colors: [string, string]): string {
+  if (box.t === 0 || box.t === 1) return colors[box.t];
+  return ROLE_COLORS[box.l] ?? "#e5e7eb";
+}
+
+function labelFor(box: WireBox): string {
+  const id = box.id !== null && box.id !== undefined ? `#${box.id}` : "";
+  switch (box.l) {
+    case "bola":
+      return box.e ? "bola?" : "bola";
+    case "goleiro":
+      return `GOL ${id}`.trim();
+    case "árbitro":
+      return `ÁRB ${id}`.trim();
+    case "árbitro/goleiro":
+      return `ÁRB/GOL ${id}`.trim();
+    default:
+      return id;
+  }
+}
+
+/** Texto escuro em fundo claro e vice-versa, para o rótulo sempre ser legível. */
+function inkFor(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? "#0b0d0a" : "#ffffff";
 }
 
 interface Props {
@@ -19,7 +51,7 @@ interface Props {
   showLabels: boolean;
 }
 
-/** Desenha as caixas detectadas por cima do vídeo, respeitando o enquadramento (object-fit: contain). */
+/** Desenha as caixas sobre o vídeo, respeitando o enquadramento (object-fit: contain). */
 export function DetectionOverlay({ video, result, showLabels }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -49,6 +81,7 @@ export function DetectionOverlay({ video, result, showLabels }: Props) {
       const offY = (ch - shownH) / 2;
       const sx = shownW / result.width;
       const sy = shownH / result.height;
+      const colors = teamColors(result);
 
       ctx.font = "600 11px system-ui, sans-serif";
       for (const box of result.boxes) {
@@ -57,17 +90,21 @@ export function DetectionOverlay({ video, result, showLabels }: Props) {
         const y = offY + y1 * sy;
         const w = (x2 - x1) * sx;
         const h = (y2 - y1) * sy;
-        const color = colorFor(box.l);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = box.l === "bola" ? 2.5 : 1.5;
-        ctx.strokeRect(x, y, w, h);
+        const color = colorFor(box, colors);
+        const dashed = box.e || box.l === "árbitro/goleiro" || box.l === "goleiro" || box.id === null;
 
-        if (showLabels) {
-          const text = `${box.l} ${Math.round(box.c * 100)}%`;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = box.l === "bola" || box.l === "goleiro" ? 2.5 : 1.75;
+        ctx.setLineDash(dashed ? [4, 3] : []);
+        ctx.strokeRect(x, y, w, h);
+        ctx.setLineDash([]);
+
+        const text = labelFor(box);
+        if (showLabels && text) {
           const tw = ctx.measureText(text).width + 6;
           ctx.fillStyle = color;
           ctx.fillRect(x, y - 14, tw, 14);
-          ctx.fillStyle = "#0b0d0a";
+          ctx.fillStyle = inkFor(color);
           ctx.fillText(text, x + 3, y - 3);
         }
       }

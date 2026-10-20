@@ -7,7 +7,7 @@ import {
   type StatusMessage,
 } from "./backend";
 import { chooseTab, FrameSender, type SenderCounters } from "./capture";
-import { DetectionOverlay, LABEL_COLORS } from "./DetectionOverlay";
+import { DetectionOverlay, ROLE_COLORS, teamColors } from "./DetectionOverlay";
 import { RollingStats, type LiveStats } from "./stats";
 
 const INTERVALS = [100, 125, 150, 175, 200];
@@ -97,6 +97,8 @@ export default function App() {
     await video.play().catch(() => undefined);
     stream.getVideoTracks()[0]?.addEventListener("ended", () => stopCapture());
 
+    // Captura nova: tracking, times e bola recomeçam do zero no backend.
+    client.send({ type: "reset_session" });
     const sender = new FrameSender(stream, video, (data) => client.sendBinary(data), intervalMs);
     senderRef.current = sender;
     statsRef.current.reset();
@@ -111,21 +113,29 @@ export default function App() {
     senderRef.current?.setInterval(ms);
   };
 
+  const colors = teamColors(result);
   const counts = useMemo(() => {
-    const out = new Map<string, number>();
-    for (const box of result?.boxes ?? []) out.set(box.l, (out.get(box.l) ?? 0) + 1);
-    return [...out.entries()].sort((a, b) => b[1] - a[1]);
-  }, [result]);
+    const out = new Map<string, { n: number; color: string }>();
+    for (const box of result?.boxes ?? []) {
+      const key = box.t === 0 || box.t === 1 ? `time ${box.t === 0 ? "A" : "B"}` : box.l;
+      const color = box.t === 0 || box.t === 1 ? colors[box.t] : (ROLE_COLORS[box.l] ?? "#e5e7eb");
+      const prev = out.get(key);
+      out.set(key, { n: (prev?.n ?? 0) + 1, color });
+    }
+    return [...out.entries()].sort((a, b) => b[1].n - a[1].n);
+  }, [result, colors]);
+  const teams = result?.teams;
+  const tracking = result?.tracking;
 
   const ready = conn === "conectado" && server?.state === "pronto";
-  const busyText = server && server.state !== "pronto" ? server.detail : null;
+  const busyText = server?.detail ?? null;
 
   return (
     <div className="app">
       <header className="topbar">
         <div>
           <h1>FC Analytics</h1>
-          <p className="subtitle">Fase 1 · captura e detecção</p>
+          <p className="subtitle">Fase 2 · tracking e times</p>
         </div>
         <div className="controls">
           {capturing ? (
@@ -210,6 +220,8 @@ export default function App() {
               <dd>{fmt(stats.latencyP95Ms)}</dd>
               <dt>Inferência</dt>
               <dd>{fmt(stats.inferMs)}</dd>
+              <dt>Tracking e times</dt>
+              <dd>{fmt(result?.trackMs)}</dd>
               <dt>Tempo no backend</dt>
               <dd>{fmt(stats.serverMs)}</dd>
               <dt>Rede (ping)</dt>
@@ -225,9 +237,9 @@ export default function App() {
             <h2>Último frame</h2>
             {counts.length ? (
               <ul className="counts">
-                {counts.map(([label, n]) => (
+                {counts.map(([label, { n, color }]) => (
                   <li key={label}>
-                    <span className="swatch" style={{ background: LABEL_COLORS[label] ?? "#e5e7eb" }} />
+                    <span className="swatch" style={{ background: color }} />
                     {label}
                     <strong>{n}</strong>
                   </li>
@@ -244,6 +256,58 @@ export default function App() {
           </section>
 
           <section className="card">
+            <h2>Times</h2>
+            {!teams ? (
+              <p className="muted small">Começa a calibrar quando a captura ligar.</p>
+            ) : teams.state === "calibrando" ? (
+              <>
+                <p className="small">
+                  Calibrando pelas cores dos uniformes... {Math.round(teams.progress * 100)}%
+                </p>
+                <div className="progress">
+                  <div style={{ width: `${Math.round(teams.progress * 100)}%` }} />
+                </div>
+                <p className="muted small">
+                  Leva até 30 segundos de jogo com a câmera aberta mostrando os dois times.
+                </p>
+              </>
+            ) : (
+              <ul className="counts">
+                {[0, 1].map((t) => (
+                  <li key={t}>
+                    <span className="swatch big" style={{ background: colors[t] }} />
+                    Time {t === 0 ? "A" : "B"}
+                    <strong>{teams.counts[t === 0 ? "0" : "1"]} em campo</strong>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button
+              className="btn small-btn"
+              disabled={!capturing}
+              onClick={() => client.send({ type: "recalibrate_teams" })}
+            >
+              Recalibrar times
+            </button>
+          </section>
+
+          <section className="card">
+            <h2>Tracking</h2>
+            <dl>
+              <dt>IDs ativos</dt>
+              <dd>{tracking?.active ?? "—"}</dd>
+              <dt>Novos IDs no último minuto</dt>
+              <dd>{tracking?.newLastMinute ?? "—"}</dd>
+              <dt>Vida média de um ID</dt>
+              <dd>{tracking?.avgLifeS === null || tracking?.avgLifeS === undefined ? "—" : `${tracking.avgLifeS} s`}</dd>
+            </dl>
+            <p className="muted small">
+              IDs estáveis aparecem como vida média alta e poucos IDs novos por minuto. Cortes de câmera e replays
+              geram IDs novos; isso é tratado na Fase 3.
+            </p>
+          </section>
+
+          <section className="card">
             <h2>Conexão</h2>
             <dl>
               <dt>Backend</dt>
@@ -253,6 +317,31 @@ export default function App() {
               <dt>Dispositivo</dt>
               <dd>{server?.device ?? "—"}</dd>
             </dl>
+          </section>
+
+          <section className="card">
+            <h2>Modelo de futebol (opcional)</h2>
+            {server?.footballModel ? (
+              <p className="small">
+                Instalado. Escolha <strong>football-player-detection</strong> em Modelo para separar jogador, goleiro,
+                árbitro e bola direto na detecção.
+              </p>
+            ) : (
+              <>
+                <p className="muted small">
+                  Modelo YOLOv8x treinado em transmissões de futebol pelo projeto roboflow/sports. Reconhece goleiro e
+                  árbitro separadamente e costuma achar melhor a bola. Gratuito (AGPL-3.0), cerca de 130 MB, baixado do
+                  Google Drive indicado no próprio projeto.
+                </p>
+                <button
+                  className="btn small-btn"
+                  disabled={!ready}
+                  onClick={() => client.send({ type: "download_football_model" })}
+                >
+                  Baixar modelo de futebol
+                </button>
+              </>
+            )}
           </section>
 
           <section className="card">

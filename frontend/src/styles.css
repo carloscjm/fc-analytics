@@ -324,3 +324,29 @@ dd.big {
 .pill-desconectado {
   color: var(--bad);
 }
+
+.swatch.big {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border);
+}
+
+.progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+  margin: 6px 0;
+}
+
+.progress > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+
+.small-btn {
+  margin-top: 10px;
+  font-size: 13px;
+  padding: 5px 12px;
+}

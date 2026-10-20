@@ -13,10 +13,7 @@ from app.main import app
 from app.protocol import build_frame
 
 
-@dataclass
-class FakeBox:
-    def to_json(self):
-        return {"b": [10, 20, 30, 60], "c": 0.9, "l": "pessoa"}
+from app.detector import Box
 
 
 @dataclass
@@ -53,7 +50,8 @@ class FakeDetector:
 
     def detect(self, image):
         self.seen_shapes.append(image.shape)
-        return FakeResult(boxes=[FakeBox()], width=image.shape[1], height=image.shape[0], infer_ms=5.0)
+        boxes = [Box(10, 20, 30, 60, 0.9, "pessoa"), Box(300, 300, 310, 310, 0.7, "bola")]
+        return FakeResult(boxes=boxes, width=image.shape[1], height=image.shape[0], infer_ms=5.0)
 
     def benchmark(self, frames):
         return {"rows": [{"model": "yolo26n.pt", "meanMs": 5.0, "p95Ms": 6.0, "fps": 200.0}],
@@ -106,8 +104,11 @@ def test_frame_returns_detections_with_ids(client):
     assert msg["frameId"] == 7
     assert msg["captureTs"] == 1234.5
     assert (msg["width"], msg["height"]) == (1280, 720)
-    assert msg["boxes"] == [{"b": [10, 20, 30, 60], "c": 0.9, "l": "pessoa"}]
+    ball = [b for b in msg["boxes"] if b["l"] == "bola"]
+    assert ball and ball[0]["b"] == [300, 300, 310, 310] and ball[0]["e"] is False
     assert msg["inferMs"] == 5.0
+    assert msg["teams"]["state"] == "calibrando"
+    assert "active" in msg["tracking"]
     ws.__exit__(None, None, None)
 
 

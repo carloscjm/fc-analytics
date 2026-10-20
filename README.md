@@ -2,7 +2,7 @@
 
 Analisador de futebol ao vivo que roda 100% no seu PC. Ele captura a aba do navegador com o jogo, detecta jogadores e bola, projeta tudo num mapa 3D visto de cima e gera estatísticas e insights em tempo real, sem nenhum serviço pago.
 
-**Status:** Fase 1 (captura e detecção). A página captura a aba do jogo, envia frames ao backend e desenha as caixas de jogadores e bola sobre o vídeo, com fps e atraso medidos ao vivo.
+**Status:** Fase 2 (tracking e times). Cada jogador ganha um ID estável, os times são separados pela cor do uniforme, árbitro e goleiros ficam à parte e a bola é estimada quando some por pouco tempo.
 
 ## Estrutura
 
@@ -42,6 +42,18 @@ Hardware de referência: RTX 4060 8 GB (cenário A do planejamento).
 - O temporizador roda num Web Worker, então continua no ritmo certo mesmo com a página em segundo plano.
 - O backend roda o YOLO26 na GPU (meia precisão) e devolve as caixas. O painel mostra fps de análise, atraso médio e p95, tempo de inferência e frames pulados.
 
+## Como a Fase 2 funciona
+
+- **Tracking:** o BoT-SORT (biblioteca `trackers`, da Roboflow) mantém um ID por jogador. Ele é o ByteTrack com compensação do movimento da câmera, o que ajuda quando a transmissão acompanha a jogada. Um jogador escondido por até cerca de 2 s volta com o mesmo ID.
+- **Times:** para cada ID, o backend pega a cor do tronco sem o verde do gramado. Nos primeiros 30 s de jogo (ou antes, se já houver 14 jogadores vistos), agrupa as cores em dois times com k-means. Cada ID vota a cada frame, e vale a maioria.
+- **Árbitro e goleiros:** com o YOLO26 oficial, quem fica longe das duas cores aparece como "árbitro/goleiro"; a separação entre os dois depende da posição no campo e entra na Fase 3. Com o modelo de futebol opcional, goleiro e árbitro vêm separados da própria detecção, e cada goleiro é atribuído ao time mais próximo dele na imagem.
+- **Bola:** entre várias candidatas, fica a mais próxima de onde a bola deveria estar. Se ela some por até 0,6 s, a posição é estimada pela última velocidade e aparece tracejada como "bola?".
+- **Na página:** caixas na cor real de cada time com o ID, painel de calibração dos times (com botão "Recalibrar times") e métricas de estabilidade dos IDs.
+
+## Modelo de futebol (opcional)
+
+No painel, **Baixar modelo de futebol** baixa o `football-player-detection.pt` (YOLOv8x, cerca de 130 MB) do Google Drive indicado no `examples/soccer/setup.sh` do projeto [roboflow/sports](https://github.com/roboflow/sports). Ele detecta `player`, `goalkeeper`, `referee` e `ball`. É gratuito e segue a licença AGPL-3.0 da Ultralytics.
+
 ## Escolher o tamanho do modelo
 
 No painel, clique em **Medir modelos** com a captura ligada. O backend mede o YOLO26 n, s, m, l e x nos frames reais do jogo e recomenda o maior que fica abaixo de 50 ms no p95. Esse limite deixa folga para o tracking e a detecção do campo das próximas fases. Na primeira medição, os modelos que faltam são baixados para `backend/models/` (cerca de 200 MB no total).
@@ -65,6 +77,8 @@ Componentes e licenças conferidos em 20/10/2026:
 | Ultralytics YOLO (código e modelos treinados) | AGPL-3.0, ou licença Enterprise paga |
 | RF-DETR (pacote e modelos N/S/M/L) | Apache 2.0 (variantes XL/2XL: PML 1.0) |
 | supervision | MIT |
+| trackers (BoT-SORT/ByteTrack) | Apache 2.0 |
+| gdown (download do modelo de futebol) | MIT |
 | roboflow/sports | MIT |
 | Datasets do Roboflow (jogadores, campo) | CC BY 4.0 (exige atribuição) |
 | OpenCV 4.5+ | Apache 2.0 |

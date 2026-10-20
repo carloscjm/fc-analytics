@@ -1,7 +1,8 @@
 """Backend do FC Analytics.
 
-Fase 1: recebe frames JPEG da aba capturada, roda a detecção com YOLO e
-devolve as caixas. Também troca de modelo e mede o desempenho de cada tamanho.
+Recebe frames JPEG da aba capturada, roda a detecção com YOLO (Fase 1) e o
+tracking com separação dos times (Fase 2), e devolve as caixas com ID, time e
+papel. Também troca de modelo e mede o desempenho de cada tamanho.
 """
 
 from __future__ import annotations
@@ -20,7 +21,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .protocol import FrameFormatError, parse_frame
 
-VERSION = "0.1.0"
+FOOTBALL_MODEL = "football-player-detection.pt"
+
+VERSION = "0.2.0"
 log = logging.getLogger("fc-analytics")
 
 
@@ -44,6 +47,12 @@ def create_detector() -> DetectorLike:
     return Detector()
 
 
+def create_pipeline():
+    from .pipeline import Pipeline
+
+    return Pipeline()
+
+
 def decode(jpeg: bytes) -> np.ndarray:
     from .detector import decode_jpeg
 
@@ -54,6 +63,17 @@ def decode(jpeg: bytes) -> np.ndarray:
 async def lifespan(app: FastAPI):
     if not hasattr(app.state, "detector"):
         app.state.detector = create_detector()
+    app.state.setup_warning = None
+    if not hasattr(app.state, "pipeline"):
+        try:
+            app.state.pipeline = create_pipeline()
+        except ImportError:
+            # Bibliotecas da Fase 2 ainda não instaladas: segue só com a detecção.
+            log.exception("tracking indisponível")
+            app.state.pipeline = None
+            app.state.setup_warning = (
+                "Faltam bibliotecas do tracking. Feche as janelas do app, rode o instalar.bat de novo e depois o iniciar.bat."
+            )
     app.state.model_ready = asyncio.Event()
     # Compartilhados entre conexões: a medição disparada de qualquer aba usa os
     # frames reais da captura, e mudanças de modelo aparecem em todas as abas.
@@ -105,6 +125,8 @@ async def broadcast(app: FastAPI, message: dict[str, Any]) -> None:
 def status_message(detector: DetectorLike, state: str = "pronto", detail: str | None = None) -> dict[str, Any]:
     from .detector import IMGSZ_OPTIONS
 
+    if detail is None and state == "pronto":
+        detail = getattr(app.state, "setup_warning", None)
     return {
         "type": "status",
         "state": state,
@@ -114,6 +136,7 @@ def status_message(detector: DetectorLike, state: str = "pronto", detail: str | 
         "imgsz": detector.imgsz,
         "imgszOptions": IMGSZ_OPTIONS,
         "device": detector.device_name,
+        "footballModel": FOOTBALL_MODEL in detector.available_models(),
     }
 
 
@@ -177,8 +200,13 @@ async def handle_frame(
     decode_ms = (time.perf_counter() - received) * 1000
     recent_frames.append(image)
 
+    pipeline = websocket.app.state.pipeline
     try:
         result = await asyncio.to_thread(detector.detect, image)
+        if pipeline is not None:
+            tracked = await asyncio.to_thread(pipeline.process, image, result.boxes, packet.capture_ts / 1000)
+        else:
+            tracked = {"boxes": [b.to_json() for b in result.boxes], "teams": None, "tracking": None, "trackMs": None}
     except Exception as exc:  # noqa: BLE001
         log.exception("falha na detecção")
         await send(
@@ -198,9 +226,12 @@ async def handle_frame(
             "decodeMs": round(decode_ms, 1),
             "inferMs": round(result.infer_ms, 1),
             "serverMs": round((time.perf_counter() - received) * 1000, 1),
+            "trackMs": tracked["trackMs"],
             "model": detector.model_name,
             "imgsz": detector.imgsz,
-            "boxes": [box.to_json() for box in result.boxes],
+            "boxes": tracked["boxes"],
+            "teams": tracked["teams"],
+            "tracking": tracked["tracking"],
         }
     )
 
@@ -243,6 +274,30 @@ async def handle_command(
             await broadcast(websocket.app, status_message(detector, "erro", f"Falha na medição: {exc}"))
             return
         await broadcast(websocket.app, {"type": "benchmark", **report})
+        await broadcast(websocket.app, status_message(detector))
+
+    elif kind == "reset_session":
+        # A página começou uma captura nova: tracking, times e bola recomeçam.
+        if websocket.app.state.pipeline is not None:
+            websocket.app.state.pipeline.reset()
+
+    elif kind == "recalibrate_teams":
+        if websocket.app.state.pipeline is not None:
+            websocket.app.state.pipeline.recalibrate_teams()
+
+    elif kind == "download_football_model":
+        await broadcast(
+            websocket.app,
+            status_message(detector, "carregando", "Baixando o modelo de futebol (cerca de 130 MB)..."),
+        )
+        try:
+            await asyncio.to_thread(detector.download_football_model)
+            await asyncio.to_thread(detector.set_model, FOOTBALL_MODEL)
+            if websocket.app.state.pipeline is not None:
+                websocket.app.state.pipeline.reset()
+        except Exception as exc:  # noqa: BLE001
+            await broadcast(websocket.app, status_message(detector, "erro", f"Falha ao baixar o modelo: {exc}"))
+            return
         await broadcast(websocket.app, status_message(detector))
 
     else:

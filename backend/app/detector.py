@@ -26,6 +26,12 @@ import numpy as np
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 OFFICIAL_MODELS = ["yolo26n.pt", "yolo26s.pt", "yolo26m.pt", "yolo26l.pt", "yolo26x.pt"]
 DEFAULT_MODEL = os.environ.get("FCA_MODEL", "yolo26s.pt")
+# Modelo YOLOv8x treinado em futebol pelo projeto roboflow/sports (licença AGPL-3.0,
+# dataset CC BY 4.0), com as classes ball, goalkeeper, player e referee.
+# O endereço é o mesmo usado pelo setup.sh de examples/soccer daquele repositório.
+FOOTBALL_MODEL_FILE = "football-player-detection.pt"
+FOOTBALL_MODEL_URL = "https://drive.google.com/uc?id=17PXFNlx-jI7VjVo_vQnB1sONjRyvoB-q"
+
 # O último modelo escolhido na página fica salvo aqui e vale nas próximas vezes.
 CHOICE_FILE = "modelo-escolhido.txt"
 IMGSZ_OPTIONS = [640, 960, 1280]
@@ -163,6 +169,21 @@ class Detector:
             if name not in self.available_models():
                 name = OFFICIAL_MODELS[1]
             self.set_model(name, remember=False)
+
+    def download_football_model(self) -> Path:
+        """Baixa o modelo de futebol (só quando a pessoa pede pela página)."""
+        import gdown
+
+        target = self.models_dir / FOOTBALL_MODEL_FILE
+        if target.exists():
+            return target
+        partial = target.with_suffix(".part")
+        result = gdown.download(FOOTBALL_MODEL_URL, str(partial), quiet=True)
+        if not result or not partial.exists() or partial.stat().st_size < 1_000_000:
+            partial.unlink(missing_ok=True)
+            raise RuntimeError("o download não foi concluído")
+        partial.replace(target)
+        return target
 
     def set_imgsz(self, imgsz: int) -> None:
         if imgsz not in IMGSZ_OPTIONS:
