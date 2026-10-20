@@ -46,3 +46,12 @@ def test_benchmark_recommends_a_model(bus_image):
     report = detector.benchmark([bus_image], names=["yolo26n.pt"], runs=3)
     assert report["rows"][0]["model"] == "yolo26n.pt"
     assert report["rows"][0]["meanMs"] > 0
+
+
+def test_remembers_chosen_model(tmp_path):
+    detector = Detector(models_dir=tmp_path)
+    detector.set_imgsz(640)
+    assert detector.saved_choice() is None
+    (tmp_path / "yolo26n.pt").write_bytes((Path(__file__).resolve().parent.parent / "models" / "yolo26n.pt").read_bytes())
+    detector.set_model("yolo26n.pt")
+    assert Detector(models_dir=tmp_path).saved_choice() == "yolo26n.pt"

@@ -26,6 +26,8 @@ import numpy as np
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 OFFICIAL_MODELS = ["yolo26n.pt", "yolo26s.pt", "yolo26m.pt", "yolo26l.pt", "yolo26x.pt"]
 DEFAULT_MODEL = os.environ.get("FCA_MODEL", "yolo26s.pt")
+# O último modelo escolhido na página fica salvo aqui e vale nas próximas vezes.
+CHOICE_FILE = "modelo-escolhido.txt"
 IMGSZ_OPTIONS = [640, 960, 1280]
 DEFAULT_IMGSZ = int(os.environ.get("FCA_IMGSZ", "960"))
 
@@ -140,14 +142,27 @@ class Detector:
         for _ in range(runs):
             self._predict(loaded, blank, self.imgsz)
 
-    def set_model(self, name: str) -> None:
+    def set_model(self, name: str, remember: bool = True) -> None:
         loaded = self._load(name)
         with self._lock:
             self._active = loaded
+        if remember:
+            (self.models_dir / CHOICE_FILE).write_text(name, encoding="utf-8")
+
+    def saved_choice(self) -> str | None:
+        path = self.models_dir / CHOICE_FILE
+        if not path.exists():
+            return None
+        name = path.read_text(encoding="utf-8").strip()
+        return name if name in self.available_models() else None
 
     def ensure_model(self) -> None:
         if self._active is None:
-            self.set_model(DEFAULT_MODEL if DEFAULT_MODEL in self.available_models() else OFFICIAL_MODELS[1])
+            env = os.environ.get("FCA_MODEL")
+            name = env or self.saved_choice() or DEFAULT_MODEL
+            if name not in self.available_models():
+                name = OFFICIAL_MODELS[1]
+            self.set_model(name, remember=False)
 
     def set_imgsz(self, imgsz: int) -> None:
         if imgsz not in IMGSZ_OPTIONS:
