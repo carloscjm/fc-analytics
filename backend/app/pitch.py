@@ -205,6 +205,9 @@ class PitchDetector:
 # ---------------------------------------------------------------------------
 
 MIN_POINTS = 4
+# Com só 4 pontos a homografia sempre "encaixa"; pedir 5 permite checar se os pontos concordam.
+MIN_INLIERS = 5
+MAX_REPROJECTION = 0.015  # erro médio aceito, em fração da largura da imagem
 RANSAC_THRESHOLD_M = 1.5
 MIN_SPREAD_M = 8.0
 SMOOTHING = 0.5
@@ -233,7 +236,14 @@ def fit_homography(image_xy: np.ndarray, pitch_xy: np.ndarray) -> tuple[np.ndarr
     if h is None or mask is None:
         return None, 0
     inliers = int(mask.sum())
-    if inliers < MIN_POINTS:
+    if inliers < MIN_INLIERS:
+        return None, inliers
+    # Os pontos do campo, levados de volta para a imagem, precisam cair perto de onde o modelo os viu.
+    keep = mask.ravel().astype(bool)
+    back = apply_h(np.linalg.inv(h), pitch_xy[keep])
+    error = float(np.mean(np.linalg.norm(back - image_xy[keep], axis=1)))
+    width = float(np.ptp(image_xy[:, 0])) or 1.0
+    if error > MAX_REPROJECTION * max(width, 640.0):
         return None, inliers
     return h, inliers
 

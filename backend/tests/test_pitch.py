@@ -192,3 +192,12 @@ def test_pipeline_without_pitch_model_reports_it():
     image, boxes = broadcast_frame([(50, 30, RED)])
     out = pipe.process(image, boxes, ts=0.0, keypoints=None)
     assert out["map"]["scene"] == "sem modelo do campo"
+
+
+def test_inconsistent_keypoints_are_rejected():
+    kp = synthetic_keypoints()
+    visible = np.flatnonzero(kp.conf >= 0.5)
+    xy = kp.xy.copy()
+    # Dois pontos com rótulos trocados: sobram só 4 que concordam entre si.
+    xy[visible[0]], xy[visible[-1]] = kp.xy[visible[-1]].copy(), kp.xy[visible[0]].copy()
+    assert HomographyTracker().update(Keypoints(xy, kp.conf, 0), W, H, ts=0.0) is None

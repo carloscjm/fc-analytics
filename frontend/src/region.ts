@@ -106,12 +106,26 @@ export class VideoRegionFinder {
     const x1 = Math.min(w - 1, colRun[1] + 1);
     const y0 = Math.max(0, rowRun[0] - 1);
     const y1 = Math.min(h - 1, rowRun[1] + 1);
-    const rect = { x: x0 / w, y: y0 / h, w: (x1 - x0 + 1) / w, h: (y1 - y0 + 1) / h };
+    let rect = { x: x0 / w, y: y0 / h, w: (x1 - x0 + 1) / w, h: (y1 - y0 + 1) / h };
+    rect = snapTo16x9(rect, w / h);
     const area = rect.w * rect.h;
     if (area < MIN_AREA) return null;
     if (rect.w > FULL_FRAME && rect.h > FULL_FRAME) return null;
     return rect;
   }
+}
+
+/**
+ * Transmissões são 16:9. Faixas do vídeo que mudam pouco (céu, placas paradas)
+ * podem encurtar a altura achada; nesse caso a altura é completada em volta do centro.
+ */
+export function snapTo16x9(rect: Rect, frameAspect: number): Rect {
+  const aspect = (rect.w * frameAspect) / rect.h; // largura/altura em pixels
+  if (aspect <= 16 / 9 * 1.04) return rect;
+  const h = Math.min(1, (rect.w * frameAspect) / (16 / 9));
+  const cy = rect.y + rect.h / 2;
+  const y = Math.min(Math.max(0, cy - h / 2), 1 - h);
+  return { x: rect.x, y, w: rect.w, h };
 }
 
 /** Troca o recorte só quando a mudança é relevante, para ele não ficar pulando. */
