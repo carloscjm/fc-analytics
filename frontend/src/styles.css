@@ -1119,3 +1119,31 @@ kbd {
 .moves tbody th {
   width: 18%;
 }
+
+.wipe-box {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--bad);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bad) 8%, var(--card));
+}
+
+.wipe-box p {
+  margin: 0 0 6px;
+}
+
+.wipe-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.wipe-actions .small-btn {
+  margin-top: 0;
+}
+
+.btn.danger-btn {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+}

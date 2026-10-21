@@ -141,3 +141,23 @@ def test_sqlite_keeps_the_match_after_restart(tmp_path):
     # Muito tempo depois (outro dia), começa uma partida nova sozinho.
     later = StatsTracker(store, now=end + 10 * 3600)
     assert later.match_id not in (match_id, again.match_id)
+
+
+def test_wipe_deletes_everything_and_frees_space(tmp_path):
+    store = MatchStore(tmp_path / "partidas.sqlite")
+    tracker = StatsTracker(store, now=1000.0)
+    end = run(tracker, 1000.0, 60, lambda t: near(0, 1))
+    tracker.add_event("gol", 0, now=end)
+    store.add_insight(tracker.match_id, {"kind": "alerta", "wall": 1, "t": 1, "team": 0, "text": "x"})
+    store.set_meta(tracker.match_id, "team_names", {"names": ["MCI", "PSG"]})
+    tracker.flush()
+    before = store.size_bytes()
+    assert before > 100_000
+
+    freed = tracker.wipe(now=end + 1)
+    assert freed > 0 and store.size_bytes() < before
+    with store._lock:
+        for table in ("positions", "frames", "plays", "events", "insights", "match_meta"):
+            assert store._db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+        assert store._db.execute("SELECT COUNT(*) FROM matches").fetchone()[0] == 1  # a partida nova, vazia
+    assert tracker.frames == [] and tracker.summary(now=end + 2)["score"] == [0, 0]

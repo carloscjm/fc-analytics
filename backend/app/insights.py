@@ -429,6 +429,17 @@ class InsightEngine:
         self.items.append(item)
         self.version += 1
 
+    def forget(self) -> None:
+        """Depois de apagar todos os dados: feed vazio e nenhuma partida carregada."""
+        with self._lock:
+            self.items = []
+            self.match_id = None
+            self.cooldown = {}
+            self.latest_stats = None
+            self.llm.last_seconds = 0.0
+            self.llm.next_at = 0.0
+            self.version += 1
+
     # ---- limpar o feed ----
 
     def remove(self, item_id: int) -> bool:

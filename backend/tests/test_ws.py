@@ -214,3 +214,17 @@ def test_match_events_are_broadcast(client):
     assert conn.receive_json()["stats"]["score"] == [0, 0]
     assert client.get("/debug/stats").json()["ready"] is True
     ws.__exit__(None, None, None)
+
+
+def test_wipe_data_resets_everything(client):
+    ws, conn, status = open_ws(client)
+    assert "storageBytes" in status["stats"]
+    conn.send_json({"type": "event", "kind": "gol", "team": 0})
+    assert conn.receive_json()["stats"]["score"][0] >= 1
+    conn.send_json({"type": "wipe_data"})
+    kinds = [conn.receive_json() for _ in range(4)]
+    assert [m["type"] for m in kinds] == ["stats", "patterns", "insights", "wiped"]
+    assert kinds[0]["stats"]["score"] == [0, 0] and kinds[0]["stats"]["events"] == []
+    assert kinds[2]["items"] == []
+    assert kinds[3]["freedBytes"] >= 0
+    ws.__exit__(None, None, None)

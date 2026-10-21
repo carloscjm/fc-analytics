@@ -48,7 +48,8 @@ export type Command =
   | { type: "new_match" }
   | { type: "set_team_names"; names: [string, string] }
   | { type: "swap_team_names" }
-  | { type: "auto_team_names" };
+  | { type: "auto_team_names" }
+  | { type: "wipe_data" };
 
 interface Props {
   stats: MatchStats | null;
@@ -300,6 +301,12 @@ function lineOption(stats: MatchStats, theme: Theme): ChartOption {
 // Painel
 // ---------------------------------------------------------------------------
 
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB`;
+  return `${(bytes / 1024 ** 3).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} GB`;
+}
+
 function NamesEditor({ names, onSave, onCancel }: { names: [string, string]; onSave: (n: [string, string]) => void; onCancel: () => void }) {
   const [a, setA] = useState(names[0]);
   const [b, setB] = useState(names[1]);
@@ -327,6 +334,8 @@ function NamesEditor({ names, onSave, onCancel }: { names: [string, string]; onS
 export function MatchPanel({ stats, colors, send }: Props) {
   const names = namesOf(stats);
   const [editingNames, setEditingNames] = useState(false);
+  const [confirmWipe, setConfirmWipe] = useState(false);
+  const storage = stats?.storageBytes;
   const [windowKey, setWindowKey] = useState<WindowKey>("recentes");
   const [confirmNew, setConfirmNew] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
@@ -413,8 +422,39 @@ export function MatchPanel({ stats, colors, send }: Props) {
           >
             {confirmNew ? "Clique de novo para zerar tudo" : "Nova partida"}
           </button>
+          <button className="link" onClick={() => setConfirmWipe(true)} disabled={confirmWipe}>
+            Apagar dados{storage !== undefined ? ` (${formatBytes(storage)})` : ""}
+          </button>
         </div>
       </div>
+
+      {confirmWipe && (
+        <div className="wipe-box" role="alertdialog" aria-labelledby="wipe-title">
+          <p id="wipe-title">
+            <strong>Apagar todos os dados coletados?</strong>
+          </p>
+          <p className="small">
+            Apaga todas as partidas gravadas até hoje: posições, estatísticas, eventos, padrões dos times, alertas e
+            análises do LLM{storage !== undefined ? `, liberando cerca de ${formatBytes(storage)} no disco` : ""}. Não dá
+            para desfazer. Os modelos baixados e as configurações continuam.
+          </p>
+          <div className="wipe-actions">
+            <button
+              className="btn small-btn danger-btn"
+              onClick={() => {
+                send({ type: "wipe_data" });
+                setConfirmWipe(false);
+                setLastAction("Todos os dados foram apagados. A coleta recomeça do zero.");
+              }}
+            >
+              Apagar tudo
+            </button>
+            <button className="btn small-btn" onClick={() => setConfirmWipe(false)}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="scoreline">
         {editingNames ? (
@@ -511,7 +551,7 @@ export function MatchPanel({ stats, colors, send }: Props) {
         </div>
       </div>
       <p className="muted small action-note" aria-live="polite">
-        {lastAction ?? "Atalhos: a tecla marca para o Time A e, com Shift, para o Time B."}
+        {lastAction ?? `Atalhos: a tecla marca para o ${names[0]} e, com Shift, para o ${names[1]}.`}
       </p>
 
       {!hasData ? (

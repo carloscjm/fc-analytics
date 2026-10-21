@@ -585,6 +585,17 @@ async def handle_command(
         if kind == "new_match":
             await broadcast(websocket.app, {"type": "patterns", **pipeline.latest_patterns()})
 
+    elif kind == "wipe_data":
+        pipeline = websocket.app.state.pipeline
+        if pipeline is None:
+            return
+        freed = await asyncio.to_thread(pipeline.wipe_all)
+        pipeline.stats_sent = pipeline.stats_version
+        await broadcast(websocket.app, {"type": "stats", "stats": pipeline.latest_stats()})
+        await broadcast(websocket.app, {"type": "patterns", **pipeline.latest_patterns()})
+        await broadcast(websocket.app, {"type": "insights", **pipeline.insights.snapshot()})
+        await broadcast(websocket.app, {"type": "wiped", "freedBytes": freed})
+
     elif kind in ("set_team_names", "swap_team_names", "auto_team_names"):
         pipeline = websocket.app.state.pipeline
         if pipeline is None:

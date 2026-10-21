@@ -154,6 +154,8 @@ export interface MatchStats {
   /** siglas lidas do placar ou digitadas; "Time A"/"Time B" enquanto não houver */
   teamNames?: [string, string];
   teamNamesSource?: "placar" | "manual" | null;
+  /** espaço que o banco das partidas ocupa no disco */
+  storageBytes?: number;
 }
 
 export interface InsightAnalysis {
@@ -269,6 +271,7 @@ export type ServerMessage =
   | StatusMessage
   | ({ type: "patterns" } & PatternsInfo)
   | { type: "stats"; stats: MatchStats }
+  | { type: "wiped"; freedBytes: number }
   | ({ type: "insights" } & InsightsInfo)
   | BenchmarkMessage;
 

@@ -104,6 +104,7 @@ O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time e
 
   **I** marca o intervalo (a coleta pausa) e, apertado de novo, o começo do 2º tempo. **Z** desfaz o último evento. Os mesmos eventos têm botões no painel.
 - **Limites:** o relógio é o do app (começa quando a partida começa no app, não o do jogo). Passes, pressão e distância dependem do que aparece na imagem e são aproximados; a distância fica bem abaixo da real.
+- **Apagar dados:** o link **Apagar dados** no painel da partida mostra quanto espaço o banco ocupa e, depois de confirmar, apaga todas as partidas gravadas (posições, estatísticas, eventos, padrões, alertas e análises) e devolve o espaço ao disco. Os modelos baixados e as configurações continuam.
 - **Diagnóstico:** `localhost:8000/debug/stats`.
 
 ## Insights e dicas (Fase 5)

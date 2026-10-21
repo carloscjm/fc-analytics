@@ -234,6 +234,28 @@ class MatchStore:
             self._db.commit()
             self._frames, self._positions, self._plays, self._last = [], [], [], None
 
+    def size_bytes(self) -> int:
+        """Espaço que o banco ocupa no disco (arquivo principal e o diário WAL)."""
+        total = 0
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                total += os.path.getsize(str(self.path) + suffix)
+            except OSError:
+                pass
+        return total
+
+    def wipe(self) -> int:
+        """Apaga todas as partidas e devolve o espaço ao disco. Retorna quantos bytes foram liberados."""
+        before = self.size_bytes()
+        with self._lock:
+            self._frames, self._positions, self._plays, self._last = [], [], [], None
+            for table in ("positions", "frames", "plays", "events", "insights", "match_meta", "matches"):
+                self._db.execute(f"DELETE FROM {table}")  # noqa: S608 (nomes fixos)
+            self._db.commit()
+            self._db.execute("VACUUM")
+            self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return max(0, before - self.size_bytes())
+
     def close(self) -> None:
         self.flush()
         with self._lock:
@@ -307,6 +329,13 @@ class StatsTracker:
         self.owner: Owner | None = None
         self.pressure: list[PressureWindow] = []
         self.version = 0
+
+    def wipe(self, now: float | None = None) -> int:
+        """Apaga tudo o que foi gravado (todas as partidas) e começa uma partida nova, vazia."""
+        with self._lock:
+            freed = self.store.wipe() if self.store else 0
+            self._start(now if now is not None else time.time(), resume=False)
+            return freed
 
     def new_match(self, now: float | None = None) -> None:
         with self._lock:

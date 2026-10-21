@@ -368,6 +368,7 @@ class Pipeline:
         summary = self.stats.summary()
         summary["teamNames"] = self.team_labels()
         summary["teamNamesSource"] = self.team_names.source
+        summary["storageBytes"] = self.storage_bytes()
         self.stats_latest = summary
         self.stats_version += 1
         try:
@@ -378,6 +379,23 @@ class Pipeline:
 
     def latest_stats(self) -> dict[str, Any]:
         return self.stats_latest if self.stats_latest is not None else self.refresh_stats()
+
+    def wipe_all(self) -> int:
+        """Apaga todos os dados gravados (partidas, estatísticas, insights, nomes) e zera os padrões.
+
+        Os modelos baixados e as configurações (modelo do LLM, intervalo) ficam.
+        """
+        freed = self.stats.wipe()
+        with self.names_lock:
+            self.team_names = TeamNames()
+            self.name_reader.reset()
+        self.insights.forget()
+        self.reset_patterns()
+        self.refresh_stats()
+        return freed
+
+    def storage_bytes(self) -> int:
+        return self.stats.store.size_bytes() if self.stats.store else 0
 
     def new_match(self) -> None:
         """Partida nova: estatísticas, eventos, padrões e nomes dos times recomeçam."""

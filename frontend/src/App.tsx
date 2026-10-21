@@ -15,7 +15,7 @@ import {
 import { chooseTab, FrameSender, type SenderCounters } from "./capture";
 import { DetectionOverlay, ROLE_COLORS, teamColors } from "./DetectionOverlay";
 import { InsightsPanel, type InsightCommand } from "./InsightsPanel";
-import { MatchPanel, type Command } from "./MatchPanel";
+import { MatchPanel, formatBytes, type Command } from "./MatchPanel";
 import { PatternField3D, SECTOR_COLORS, type CameraMode, type FieldArrow, type FieldEnds, type PatternLayer } from "./PatternField3D";
 import { RollingStats, type LiveStats } from "./stats";
 
@@ -241,6 +241,7 @@ export default function App() {
       if (msg.type === "insights") setInsights(msg);
       if (msg.type === "patterns") setPatterns(msg);
       if (msg.type === "stats") setMatchStats(msg.stats);
+      if (msg.type === "wiped") setNotice(`Dados apagados: ${formatBytes(msg.freedBytes)} liberados no disco.`);
       if (msg.type === "benchmark") setBenchmark(msg);
       if (msg.type === "error") setNotice(msg.detail);
       if (msg.type === "detections") {
