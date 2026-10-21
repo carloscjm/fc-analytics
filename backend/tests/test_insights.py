@@ -264,3 +264,22 @@ def test_remove_and_clear_feed(tmp_path):
     fresh = InsightEngine(store=store, ollama=FakeOllama(installed=()), clock=clock)
     fresh.bind_match(match_id)
     assert fresh.snapshot()["items"] == []
+
+
+def test_tactic_alerts_and_llm_summary():
+    from app.insights import tactic_alerts
+
+    s = stats()
+    s["teamNames"] = ["MCI", "PSG"]
+    patterns = {"tactics": {
+        "0": {"changes": ["Passou a defender com 5 atrás (antes eram 4)."], "positions": ["LE: sobe e apoia por fora."],
+              "buildUp": {"text": "Saída de bola com 3, com o volante entre os zagueiros em 70% de 40 lances."},
+              "plays": {"recentes": {"counts": {"cruzamento": 7, "entrada": 1, "chute_fora": 3}}, "partida": {"counts": {"cruzamento": 9}}, "texts": ["Chega à área mais no cruzamento (chuveirinho)."]}},
+        "1": {"changes": [], "plays": {"recentes": {"counts": {}}}},
+    }}
+    texts = [a.text for a in tactic_alerts(s, patterns)]
+    assert "MCI: Passou a defender com 5 atrás (antes eram 4)." in texts
+    assert any("chuveirinho" in t for t in texts) and any("arrisca de fora" in t for t in texts)
+    summary = build_summary(s, patterns, [])
+    assert summary["leitura_tatica"]["MCI"]["saida_de_bola"].startswith("Saída de bola com 3")
+    assert summary["leitura_tatica"]["MCI"]["mudancas_ultimos_10_min"]

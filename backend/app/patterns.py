@@ -23,6 +23,7 @@ aproximação que melhora com mais minutos de jogo.
 from __future__ import annotations
 
 import threading
+import time
 from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,6 +32,17 @@ import cv2
 import numpy as np
 
 from .pitch import LENGTH, WIDTH
+from .tactics import (
+    RECENT_S,
+    BallPlays,
+    build_up_summary,
+    build_up_text,
+    change_texts,
+    classify_build_up,
+    plays_summary,
+    plays_texts,
+    role_texts,
+)
 from .teams import kmeans
 
 PHASES = ("ataque", "defesa")
@@ -40,7 +52,7 @@ POSSESSION_MEMORY_S = 3.0
 TILT_MIN_DIFF_M = 6.0
 MIN_PLAYERS_PER_FRAME = 5
 GHOST_MAX_AGE_S = 2.0
-MAX_FRAMES = 4000
+MAX_FRAMES = 12000  # cerca de 30 min de jogo ao vivo por fase
 MIN_FRAMES_FOR_PATTERN = 40
 ROLES = 10
 SIDE_HALF_LIFE_S = 120.0
@@ -71,6 +83,7 @@ class SideEstimator:
 @dataclass
 class PhaseSamples:
     frames: deque = field(default_factory=lambda: deque(maxlen=MAX_FRAMES))
+    walls: deque = field(default_factory=lambda: deque(maxlen=MAX_FRAMES))  # horário de cada frame (relógio do PC)
     seconds: float = 0.0
 
 
@@ -145,15 +158,16 @@ BACK_LINE_KEEP = 1500
 BACK_LINE_COVERAGE = 0.9
 
 
-def count_back_line(points: np.ndarray, view: np.ndarray | None) -> int | None:
-    """Quantos jogadores formam a última linha, se a câmera mostra a largura do campo na altura dela.
+def back_line_members(points: np.ndarray, view: np.ndarray | None) -> np.ndarray | None:
+    """Jogadores da última linha, se a câmera mostra a largura do campo na altura dela.
 
     `points` e `view` já normalizados (time atacando para a direita, próprio gol em x = 0).
     """
     if view is None or len(points) < 5:
         return None
     deepest = float(points[:, 0].min())
-    members = int(np.sum(points[:, 0] <= deepest + BACK_LINE_BAND_M))
+    mask = points[:, 0] <= deepest + BACK_LINE_BAND_M
+    members = int(mask.sum())
     if not 2 <= members <= 6 or members == len(points):
         return None
     poly = view.astype(np.float32).reshape(-1, 1, 2)
@@ -165,18 +179,25 @@ def count_back_line(points: np.ndarray, view: np.ndarray | None) -> int | None:
     inside = sum(cv2.pointPolygonTest(poly, (float(x), float(y)), False) >= 0 for x, y in grid)
     if inside / len(grid) < BACK_LINE_COVERAGE:
         return None
-    return members
+    return points[mask]
 
 
-def back_line_summary(counts: deque | list) -> dict[str, Any]:
-    values = list(counts)
+def count_back_line(points: np.ndarray, view: np.ndarray | None) -> int | None:
+    """Quantos jogadores formam a última linha (None se a câmera não mostra a linha inteira)."""
+    members = back_line_members(points, view)
+    return None if members is None else len(members)
+
+
+def back_line_summary(counts: deque | list, since: float | None = None, min_frames: int = BACK_LINE_MIN_FRAMES) -> dict[str, Any]:
+    """`counts`: (horário, contagem). `since` limita aos lances a partir desse horário."""
+    values = [c for wall, c in counts if since is None or wall >= since]
     total = len(values)
     tally = Counter(values)
     estimate, share = None, 0.0
     if total:
         top, n = tally.most_common(1)[0]
         share = n / total
-        if total >= BACK_LINE_MIN_FRAMES and share >= BACK_LINE_MIN_SHARE and 3 <= top <= 5:
+        if total >= min_frames and share >= BACK_LINE_MIN_SHARE and 3 <= top <= 5:
             estimate = int(top)
     return {
         "counts": {str(k): v for k, v in sorted(tally.items())},
@@ -372,6 +393,9 @@ class PatternStore:
             self.back_counts: dict[tuple[int, str], deque] = {
                 (t, p): deque(maxlen=BACK_LINE_KEEP) for t in (0, 1) for p in PHASES
             }
+            self.build_ups: dict[int, deque] = {t: deque(maxlen=BACK_LINE_KEEP) for t in (0, 1)}
+            self.plays = BallPlays()
+            self.by_ball = False
             self.cached: dict[str, Any] | None = None
             # Formações escolhidas à mão continuam depois de "Zerar padrões" (são decisão de quem assiste).
             if not hasattr(self, "overrides"):
@@ -392,8 +416,11 @@ class PatternStore:
         with self._lock:
             self.overrides = {}
 
-    def observe(self, field_map: dict[str, Any], ts: float, view: list[list[float]] | None = None) -> None:
+    def observe(
+        self, field_map: dict[str, Any], ts: float, view: list[list[float]] | None = None, now: float | None = None
+    ) -> None:
         """Recebe o mapa do frame (jogadores em metros) quando a cena é de jogo ao vivo."""
+        wall = time.time() if now is None else now
         with self._lock:
             dt = 0.0 if self.last_ts is None else min(max(ts - self.last_ts, 0.0), 0.5)
             self.last_ts = ts
@@ -407,14 +434,24 @@ class PatternStore:
                 t: np.array([[p["x"], p["y"]] for p in players if p["t"] == t and p["l"] in OUTFIELD_ROLES], np.float32)
                 for t in (0, 1)
             }
-            attacking = self._possession(field_map.get("ball"), players, team_pts, ts)
+            ball = field_map.get("ball")
+            attacking = self._possession(ball, players, team_pts, ts)
             if attacking is None:
                 self.phase_frames["sem fase"] += 1
+                self.plays.add(wall, None, None, None)
                 return
             defends_left0 = self.side.team0_defends_left()
             if defends_left0 is None:
                 self.phase_frames["sem fase"] += 1
                 return
+            # Jogadas com a bola: só com a posse decidida pela bola e a bola vista de fato.
+            ball_norm = None
+            if self.by_ball and ball is not None and not ball.get("e"):
+                att_left = defends_left0 if attacking == 0 else not defends_left0
+                ball_norm = normalize(np.array([[ball["x"], ball["y"]]], np.float32), att_left)[0]
+                self.plays.add(wall, attacking, float(ball_norm[0]), float(ball_norm[1]))
+            else:
+                self.plays.add(wall, None, None, None)
             for t in (0, 1):
                 pts = team_pts[t]
                 if len(pts) < MIN_PLAYERS_PER_FRAME:
@@ -423,17 +460,23 @@ class PatternStore:
                 phase = "ataque" if t == attacking else "defesa"
                 bucket = self.samples[(t, phase)]
                 bucket.frames.append(normalize(pts, defends_left))
+                bucket.walls.append(wall)
                 bucket.seconds += dt
                 if view is not None:
                     seen = np.array(
                         [[p["x"], p["y"]] for p in players if p["t"] == t and p["l"] in OUTFIELD_ROLES and not p.get("g")],
                         np.float32,
                     ).reshape(-1, 2)
-                    count = count_back_line(
+                    members = back_line_members(
                         normalize(seen, defends_left), normalize(np.array(view, np.float32), defends_left)
                     )
-                    if count is not None:
-                        self.back_counts[(t, phase)].append(count)
+                    if members is not None:
+                        self.back_counts[(t, phase)].append((wall, len(members)))
+                        # Saída de bola: o time tem a bola no próprio terço.
+                        if phase == "ataque" and ball_norm is not None and ball_norm[0] <= 40:
+                            label = classify_build_up(members)
+                            if label:
+                                self.build_ups[t].append((wall, label))
 
     def _update_side(self, players: list[dict[str, Any]], ts: float) -> None:
         evidence = 0.0
@@ -468,6 +511,7 @@ class PatternStore:
                 self.possession_ts = ts
             if self.possession is not None:
                 self.phase_frames["bola"] += 1
+                self.by_ball = True
                 return self.possession
 
         recent = (
@@ -477,7 +521,9 @@ class PatternStore:
         )
         if recent is not None:
             self.phase_frames["bola"] += 1
+            self.by_ball = True
             return recent
+        self.by_ball = False
 
         # Sem bola: o time mais avançado em direção ao gol adversário está atacando.
         defends_left0 = self.side.team0_defends_left()
@@ -492,10 +538,15 @@ class PatternStore:
 
     # ---------- resumo ----------
 
-    def summary(self) -> dict[str, Any]:
+    def summary(self, now: float | None = None) -> dict[str, Any]:
+        now = time.time() if now is None else now
         with self._lock:
             frames = {key: list(bucket.frames) for key, bucket in self.samples.items()}
-            backs = {key: back_line_summary(c) for key, c in self.back_counts.items()}
+            walls = {key: list(bucket.walls) for key, bucket in self.samples.items()}
+            back_raw = {key: list(c) for key, c in self.back_counts.items()}
+            build_ups = {t: list(v) for t, v in self.build_ups.items()}
+            events = list(self.plays.events)
+            backs = {key: back_line_summary(c) for key, c in back_raw.items()}
             overrides = dict(self.overrides)
             seconds = {key: bucket.seconds for key, bucket in self.samples.items()}
             side = self.side.team0_defends_left()
@@ -523,8 +574,54 @@ class PatternStore:
             str(t): transition(out["options"][f"{t}-defesa"]["pattern"], out["options"][f"{t}-ataque"]["pattern"])
             for t in (0, 1)
         }
+        out["tactics"] = {
+            str(t): team_tactics(t, out, frames, walls, back_raw, build_ups[t], events, now - RECENT_S) for t in (0, 1)
+        }
         self.cached = out
         return out
+
+
+def _window_pattern(frames: list[np.ndarray], walls: list[float], since: float, recent: bool) -> dict[str, Any] | None:
+    chosen = [f for f, w in zip(frames, walls) if (w >= since) == recent]
+    return compute_pattern(chosen) if len(chosen) >= MIN_FRAMES_FOR_PATTERN else None
+
+
+def team_tactics(
+    team: int,
+    out: dict[str, Any],
+    frames: dict[tuple[int, str], list[np.ndarray]],
+    walls: dict[tuple[int, str], list[float]],
+    back_raw: dict[tuple[int, str], list[tuple[float, int]]],
+    build_ups: list[tuple[float, str]],
+    events: list[tuple[float, int, str, str | None]],
+    since: float,
+) -> dict[str, Any]:
+    """Leitura tática de um time: posições, saída de bola, jogadas com a bola e mudanças nos últimos 10 min."""
+    attack = out["options"][f"{team}-ataque"]["pattern"]
+    defense = out["options"][f"{team}-defesa"]["pattern"]
+    plays_whole = plays_summary(events, team)
+    plays_recent = plays_summary(events, team, since)
+    build_whole = build_up_summary(build_ups)
+    build_recent = build_up_summary(build_ups, since)
+    build_earlier = build_up_summary([b for b in build_ups if b[0] < since])
+    back = back_raw[(team, "defesa")]
+    back_earlier = back_line_summary([b for b in back if b[0] < since], min_frames=15)["estimate"]
+    back_recent = back_line_summary(back, since=since, min_frames=15)["estimate"]
+    changes = change_texts(
+        attack,
+        _window_pattern(frames[(team, "ataque")], walls[(team, "ataque")], since, recent=False),
+        _window_pattern(frames[(team, "ataque")], walls[(team, "ataque")], since, recent=True),
+        back_earlier,
+        back_recent,
+        build_earlier["main"],
+        build_recent["main"],
+    )
+    return {
+        "positions": role_texts(attack, defense, plays_whole),
+        "buildUp": {**build_whole, "text": build_up_text(build_whole), "recent": build_recent},
+        "plays": {"partida": plays_whole, "recentes": plays_recent, "texts": plays_texts(plays_whole, plays_recent)},
+        "changes": changes,
+    }
 
 
 # ---------------------------------------------------------------------------

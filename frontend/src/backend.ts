@@ -112,12 +112,36 @@ export interface PatternTransition {
   highlights: string[];
 }
 
+export type PlayKind = "cruzamento" | "entrada" | "chute_fora" | "chute_dentro" | "corta_dentro" | "vai_fundo";
+
+export interface PlaysInfo {
+  counts: Record<PlayKind, number>;
+  bySide: Record<"cruzamento" | "corta_dentro" | "vai_fundo", { esquerda: number; direita: number }>;
+}
+
+export interface BuildUpInfo {
+  counts: Record<string, number>;
+  total: number;
+  main: string | null;
+  share: number;
+}
+
+/** Leitura tática de um time: posições, saída de bola, jogadas com a bola e mudanças nos últimos 10 min. */
+export interface TeamTactics {
+  positions: string[];
+  buildUp: BuildUpInfo & { text: string | null; recent: BuildUpInfo };
+  plays: { partida: PlaysInfo; recentes: PlaysInfo; texts: string[] };
+  changes: string[];
+}
+
 export interface PatternsInfo {
   options: Record<string, PatternOption>;
   phaseSource: { bola: number; "avanço": number; "sem fase": number };
   team0DefendsLeft: boolean | null;
   /** formações que dá para escolher à mão */
   formationOptions?: string[];
+  /** leitura tática de cada time ("0" e "1") */
+  tactics?: Record<string, TeamTactics>;
   /** defesa → ataque de cada time ("0" e "1") */
   transitions?: Record<string, PatternTransition | null>;
 }
@@ -178,6 +202,8 @@ export interface InsightAnalysis {
   funcionando: string[];
   espacos: string[];
   sugestoes: string[];
+  /** comportamento das posições e das jogadas */
+  posicoes?: string[];
 }
 
 /** Um item do feed: alerta de regra (imediato) ou análise do LLM local. */

@@ -1153,3 +1153,63 @@ kbd {
   font-size: 12px;
   max-width: 150px;
 }
+
+/* ---------- Leitura tática ---------- */
+
+.tactics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+@media (max-width: 800px) {
+  .tactics-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.tactics-team h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.tactics-block {
+  margin-bottom: 12px;
+}
+
+.tactics-block h4 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.tactics-block ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.tactics-block p {
+  margin: 0;
+}
+
+.tactics-block.changes.has {
+  padding: 8px 10px;
+  border-left: 3px solid var(--warn);
+  border-radius: 8px;
+  background: var(--rec);
+}
+
+.compare.plays {
+  margin-top: 6px;
+}
+
+.compare.plays tbody th {
+  width: 60%;
+}

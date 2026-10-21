@@ -69,6 +69,30 @@ def _last_minutes(values: list[float | None], n: int) -> list[float] | None:
     return [float(v) for v in tail]  # type: ignore[arg-type]
 
 
+CHANGE_COOLDOWN_S = 15 * 60  # uma mudança de comportamento só volta a ser avisada depois de 15 min
+
+
+def tactic_alerts(stats: dict[str, Any], patterns: dict[str, Any] | None) -> list[Alert]:
+    """Alertas da leitura tática: mudanças nos últimos 10 min, chuveirinho e chutes de fora."""
+    names = team_labels(stats)
+    out: list[Alert] = []
+    for key, info in ((patterns or {}).get("tactics") or {}).items():
+        t = int(key)
+        for change in info.get("changes", []):
+            # A regra leva o começo do texto, para cada tipo de mudança ter o próprio tempo de espera.
+            out.append(Alert(f"mudanca:{change.split(':')[0][:40]}", t, f"{names[t]}: {change}", "atencao"))
+        recent = ((info.get("plays") or {}).get("recentes") or {}).get("counts") or {}
+        crosses, entries = recent.get("cruzamento", 0), recent.get("entrada", 0)
+        if crosses >= 5 and crosses >= 2 * max(entries, 1):
+            out.append(Alert("chuveirinho", t, (
+                f"{names[t]} está no chuveirinho: {crosses} cruzamentos na área nos últimos 10 minutos "
+                f"e só {entries} entradas com a bola dominada.")))
+        if recent.get("chute_fora", 0) >= 3:
+            out.append(Alert("chutes_fora", t, (
+                f"{names[t]} arrisca de fora: {recent['chute_fora']} chutes de fora da área nos últimos 10 minutos.")))
+    return out
+
+
 def team_labels(stats: dict[str, Any]) -> tuple[str, str]:
     """Nomes dos times (siglas do placar ou digitados); "Time A" e "Time B" enquanto não houver."""
     names = stats.get("teamNames") or TEAM
@@ -206,6 +230,16 @@ def build_summary(stats: dict[str, Any], patterns: dict[str, Any] | None, alerts
             for t, tr in ((patterns or {}).get("transitions") or {}).items()
             if tr
         },
+        "leitura_tatica": {
+            names[int(t)]: {
+                "posicoes": info.get("positions", [])[:9],
+                "saida_de_bola": (info.get("buildUp") or {}).get("text"),
+                "bola_no_ataque": (info.get("plays") or {}).get("texts", []),
+                "jogadas_na_partida": ((info.get("plays") or {}).get("partida") or {}).get("counts"),
+                "mudancas_ultimos_10_min": info.get("changes", []),
+            }
+            for t, info in ((patterns or {}).get("tactics") or {}).items()
+        },
         "alertas_recentes": alerts[-6:],
     }
 
@@ -236,6 +270,10 @@ USER_PROMPT = (
     "time espaçado = meio aberto, ataque sempre pelo mesmo lado = o outro lado livre) e como o outro pode explorar.\n"
     "- sugestoes: até 3 dicas práticas, cada uma dizendo para qual time (por exemplo trocar o lado do ataque, "
     "baixar ou subir o bloco, pressionar mais depois de perder a bola).\n"
+    "- posicoes: até 4 itens sobre o comportamento das posições e das jogadas, usando leitura_tatica: laterais "
+    "(apoiam por fora ou por dentro), volantes (caem na saída de bola?), meias (entre as linhas, abertos ou recuados), "
+    "pontas (abrem ou cortam para dentro), centroavante, saída de bola e como chegam à área (cruzamentos, entradas "
+    "trabalhadas, chutes de fora). Diga o time em cada item e destaque mudanças dos últimos 10 minutos.\n"
     "Cada item deve ter uma frase só, sem repetir o mesmo número em itens diferentes e sem dicas que se contradizem."
 )
 
@@ -246,8 +284,9 @@ RESPONSE_SCHEMA = {
         "funcionando": {"type": "array", "items": {"type": "string"}},
         "espacos": {"type": "array", "items": {"type": "string"}},
         "sugestoes": {"type": "array", "items": {"type": "string"}},
+        "posicoes": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["leitura", "funcionando", "espacos", "sugestoes"],
+    "required": ["leitura", "funcionando", "espacos", "sugestoes", "posicoes"],
 }
 
 
@@ -275,6 +314,7 @@ def parse_analysis(content: str) -> dict[str, Any]:
         "funcionando": items("funcionando"),
         "espacos": items("espacos"),
         "sugestoes": items("sugestoes"),
+        "posicoes": items("posicoes")[:4] if data.get("posicoes") else [],
     }
 
 
@@ -476,9 +516,10 @@ class InsightEngine:
         with self._lock:
             self.latest_stats, self.latest_patterns = stats, patterns
             if not stats.get("paused"):
-                for alert in evaluate_rules(stats):
+                for alert in evaluate_rules(stats) + tactic_alerts(stats, patterns):
                     key = (alert.rule, alert.team)
-                    if now - self.cooldown.get(key, -1e9) < ALERT_COOLDOWN_S:
+                    wait = CHANGE_COOLDOWN_S if alert.rule.startswith("mudanca") else ALERT_COOLDOWN_S
+                    if now - self.cooldown.get(key, -1e9) < wait:
                         continue
                     self.cooldown[key] = now
                     self._add({

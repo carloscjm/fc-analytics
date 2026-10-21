@@ -178,6 +178,7 @@ function Item({
     const sections: [string, string[]][] = [
       ["Funcionando", a.funcionando],
       ["Espaços para explorar", a.espacos],
+      ["Posições e jogadas", a.posicoes ?? []],
       ["Sugestões", a.sugestoes],
     ];
     return (

@@ -82,6 +82,17 @@ O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time e
 - **Defesa → ataque:** uma opção para cada time mostra onde cada posição fica defendendo (anéis) e para onde vai atacando (jogadores), com setas. Embaixo, frases sobre os movimentos mais claros (lateral que apoia ou fica, volante que recua para perto dos zagueiros, pontas que fecham para o meio) e uma tabela com quanto cada posição avança e em que linha fica no ataque.
 - **Limite:** as posições são médias de quem ocupa cada região, não jogadores identificados. A câmera mostra só parte do campo e os IDs recomeçam a cada corte.
 
+## Leitura tática
+
+O painel **Leitura tática** mostra, para cada time:
+
+- **Mudanças nos últimos 10 minutos:** compara os últimos 10 minutos com o que veio antes, por exemplo "passou a defender com 5 atrás (antes eram 4)", "na saída de bola, passou de 4 atrás para 3 com o volante entre os zagueiros" ou "LE: antes jogava por fora, agora por dentro".
+- **Posições:** com quantos defende; se cada lateral sobe e apoia por fora ou por dentro, e se passa por fora do ponta; se os pontas jogam abertos ou por dentro e se a jogada do lado deles corta para dentro ou vai ao fundo; se o volante recua para a altura dos zagueiros; onde os meias jogam (entre as linhas, abertos, recuados); se o centroavante fica na referência ou recua.
+- **Saída de bola:** com a bola no próprio terço e a defesa inteira na imagem, quem forma a última linha: 2 zagueiros, 3 com o volante entre os zagueiros, 3 com um lateral que fica, 4 atrás.
+- **Bola no ataque:** pelo caminho da bola (só quando ela aparece de fato), cruzamentos para a área, entradas na área com a bola dominada, chutes de fora e de dentro da área, e conduções pelos lados que cortam para dentro ou vão ao fundo, na partida e nos últimos 10 minutos.
+
+As mudanças, o chuveirinho (5 ou mais cruzamentos em 10 minutos, o dobro das entradas trabalhadas) e os chutes de fora (3 ou mais em 10 minutos) também viram alertas, e a análise do LLM ganhou a seção "Posições e jogadas". As contagens dependem de a bola aparecer na imagem e são aproximadas.
+
 ## Limpeza da análise
 
 - **Campo:** pontos do campo achados fora do gramado (faixas pretas, placar, menus da página) são descartados antes do encaixe do campo.

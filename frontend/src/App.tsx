@@ -16,6 +16,7 @@ import { chooseTab, FrameSender, type SenderCounters } from "./capture";
 import { DetectionOverlay, ROLE_COLORS, teamColors } from "./DetectionOverlay";
 import { InsightsPanel, type InsightCommand } from "./InsightsPanel";
 import { MatchPanel, formatBytes, type Command } from "./MatchPanel";
+import { TacticsPanel } from "./TacticsPanel";
 import { PatternField3D, SECTOR_COLORS, type CameraMode, type FieldArrow, type FieldEnds, type PatternLayer } from "./PatternField3D";
 import { RollingStats, type LiveStats } from "./stats";
 
@@ -668,6 +669,7 @@ export default function App() {
       <main className={`layout ${insightsWide ? "wide-insights" : ""}`}>
         <div className="main-col">
         {patternCard}
+        <TacticsPanel tactics={patterns?.tactics} names={names} colors={colors} />
         <MatchPanel stats={matchStats} colors={colors} send={sendCommand} />
         <section className="stage">
           <video ref={setVideo} muted playsInline className="video" />

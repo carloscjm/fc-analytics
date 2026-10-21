@@ -190,3 +190,6 @@ def test_store_counts_the_back_line_and_respects_overrides():
     store.reset()
     assert store.summary()["options"]["0-defesa"]["override"] == "5-3-2"  # a escolha continua depois de zerar
     assert "3-4-3" in summary["formationOptions"]
+    tactics = summary["tactics"]["0"]
+    assert tactics["positions"][0].startswith("Defende com 3 atrás")
+    assert set(tactics) == {"positions", "buildUp", "plays", "changes"}
