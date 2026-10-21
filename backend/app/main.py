@@ -268,6 +268,30 @@ def debug_snapshot() -> Response:
     return Response(content=buf.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/debug/patterns")
+def debug_patterns() -> dict:
+    pipeline = getattr(app.state, "pipeline", None)
+    latest = pipeline.latest_patterns() if pipeline is not None else None
+    if not latest:
+        return {"ready": False}
+    return {
+        "ready": True,
+        "team0DefendsLeft": latest.get("team0DefendsLeft"),
+        "phaseSource": latest.get("phaseSource"),
+        "options": {
+            key: {
+                "frames": o["frames"],
+                "seconds": o["seconds"],
+                "formation": (o["pattern"] or {}).get("formation"),
+                "lineHeight": (o["pattern"] or {}).get("lineHeight"),
+                "width": (o["pattern"] or {}).get("width"),
+                "corridors": (o["pattern"] or {}).get("corridors"),
+            }
+            for key, o in latest["options"].items()
+        },
+    }
+
+
 @app.get("/debug/map.png")
 def debug_map() -> Response:
     """O mapa visto de cima desenhado em 2D (10 px por metro)."""
@@ -331,7 +355,12 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     if not ready.is_set():
         await send(websocket, status_message(detector, "carregando", "Carregando o modelo de detecção..."))
         await ready.wait()
-    await send(websocket, status_message(detector))
+    # Quem chega agora (uma aba nova) já recebe os padrões acumulados junto com o status.
+    pipeline = websocket.app.state.pipeline
+    first_status = status_message(detector)
+    if pipeline is not None and pipeline.latest_patterns() is not None:
+        first_status["patterns"] = pipeline.latest_patterns()
+    await send(websocket, first_status)
 
     recent_frames: deque[np.ndarray] = websocket.app.state.recent_frames
     websocket.app.state.clients.add(websocket)
@@ -419,6 +448,7 @@ async def handle_frame(
             "tracking": tracked["tracking"],
             "wide": tracked.get("wide"),
             "map": tracked.get("map"),
+            "patterns": tracked.get("patterns"),
         }
     websocket.app.state.last_frame = (image, message, time.time())
     websocket.app.state.result_times.append(time.time())
@@ -470,6 +500,11 @@ async def handle_command(
         # A página começou uma captura nova: tracking, times e bola recomeçam.
         if websocket.app.state.pipeline is not None:
             websocket.app.state.pipeline.reset()
+
+    elif kind == "reset_patterns":
+        if websocket.app.state.pipeline is not None:
+            websocket.app.state.pipeline.reset_patterns()
+            await broadcast(websocket.app, {"type": "patterns", **websocket.app.state.pipeline.latest_patterns()})
 
     elif kind == "recalibrate_teams":
         if websocket.app.state.pipeline is not None:

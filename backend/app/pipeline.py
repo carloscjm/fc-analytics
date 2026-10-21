@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 
 from .ball import BallTracker
+from .patterns import PatternStore
 from .fieldmap import FieldMap
 from .pitch import LAST_FIT, CutDetector, HomographyTracker, Keypoints, is_close_up, visible_area
 from .teams import OUTLIER, TeamClassifier, jersey_feature
@@ -75,6 +76,13 @@ def is_wide_shot(people: list[Any], height: int) -> bool:
 class Pipeline:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        # Os padrões dos times sobrevivem a novas capturas; só zeram quando a pessoa pede.
+        self.patterns = PatternStore()
+        self.patterns_version = 0
+        self.patterns_sent = -1
+        self.patterns_latest: dict[str, Any] | None = None
+        self.patterns_next_ts = 0.0
+        self.patterns_busy = False
         self.reset()
 
     def reset(self) -> None:
@@ -219,8 +227,12 @@ class Pipeline:
         else:
             scene = "sem campo"
         self.map.update(view.h if view is not None else None, tracked_boxes, ts, scene)
+        snapshot = self.map.snapshot(ts)
+        if view is not None and view.fresh:
+            self.patterns.observe(snapshot, ts)
+        self._maybe_summarize(ts)
         field = {
-            **self.map.snapshot(ts),
+            **snapshot,
             "keypoints": int((keypoints.conf >= 0.5).sum()) if keypoints is not None else 0,
             "fit": dict(LAST_FIT),
             "kp": [
@@ -240,9 +252,13 @@ class Pipeline:
             "0": sum(1 for b in tracked_boxes if b["t"] == 0),
             "1": sum(1 for b in tracked_boxes if b["t"] == 1),
         }
+        patterns = None
+        if self.patterns_version != self.patterns_sent:
+            patterns, self.patterns_sent = self.patterns_latest, self.patterns_version
         return {
             "boxes": tracked_boxes,
             "map": field,
+            "patterns": patterns,
             "wide": wide,
             "teams": {**self.teams.info(), "counts": counts},
             "tracking": self._stats(ts, active=sum(1 for b in tracked_boxes if b["id"] is not None)),
@@ -266,6 +282,31 @@ class Pipeline:
             "newLastMinute": recent_new,
             "avgLifeS": round(float(np.mean(lifetimes)), 1) if lifetimes else None,
         }
+
+    # ---------- padrões dos times (calculados em segundo plano a cada 10 s) ----------
+
+    def _maybe_summarize(self, ts: float) -> None:
+        if self.patterns_busy or ts < self.patterns_next_ts:
+            return
+        self.patterns_next_ts = ts + 10.0
+        self.patterns_busy = True
+
+        def work() -> None:
+            try:
+                self.patterns_latest = self.patterns.summary()
+                self.patterns_version += 1
+            finally:
+                self.patterns_busy = False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def latest_patterns(self) -> dict[str, Any] | None:
+        return self.patterns_latest
+
+    def reset_patterns(self) -> None:
+        self.patterns.reset()
+        self.patterns_latest = self.patterns.summary()
+        self.patterns_version += 1
 
     def recalibrate_teams(self) -> None:
         with self._lock:

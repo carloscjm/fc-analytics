@@ -48,6 +48,44 @@ export interface MapInfo {
   cut: boolean;
 }
 
+export interface PatternRole {
+  x: number;
+  y: number;
+  sx: number;
+  sy: number;
+  /** linha: 0 = defesa, a última = ataque */
+  line: number;
+  share: number;
+}
+
+export interface TeamPattern {
+  formation: string;
+  roles: PatternRole[];
+  /** altura média da linha de defesa, em metros a partir do próprio gol */
+  lineHeight: number;
+  block: "baixo" | "médio" | "alto";
+  width: number;
+  depth: number;
+  corridors: { esquerda: number; centro: number; direita: number } | null;
+  heat: { nx: number; ny: number; cell: number; values: number[] };
+  points: number;
+}
+
+export interface PatternOption {
+  team: 0 | 1;
+  phase: "ataque" | "defesa";
+  frames: number;
+  seconds: number;
+  needed: number;
+  pattern: TeamPattern | null;
+}
+
+export interface PatternsInfo {
+  options: Record<string, PatternOption>;
+  phaseSource: { bola: number; "avanço": number; "sem fase": number };
+  team0DefendsLeft: boolean | null;
+}
+
 export interface TrackingInfo {
   active: number;
   cutsLastMinute?: number;
@@ -73,6 +111,7 @@ export interface DetectionsMessage {
   teams?: TeamsInfo;
   tracking?: TrackingInfo;
   map?: MapInfo | null;
+  patterns?: PatternsInfo | null;
   error?: string;
 }
 
@@ -87,6 +126,7 @@ export interface StatusMessage {
   device: string;
   footballModel: boolean;
   pitch?: { state: "ausente" | "carregando" | "baixando" | "pronto" | "erro" | "indisponível"; error: string | null };
+  patterns?: PatternsInfo;
 }
 
 export interface BenchmarkRow {
@@ -113,6 +153,7 @@ export type ServerMessage =
   | { type: "error"; detail: string }
   | DetectionsMessage
   | StatusMessage
+  | ({ type: "patterns" } & PatternsInfo)
   | BenchmarkMessage;
 
 export const WS_URL: string =

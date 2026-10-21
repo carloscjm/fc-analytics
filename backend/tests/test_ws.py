@@ -71,6 +71,8 @@ def client():
     with TestClient(app) as c:
         yield c
     del app.state.detector
+    if hasattr(app.state, "pipeline"):
+        del app.state.pipeline
 
 
 def open_ws(client):

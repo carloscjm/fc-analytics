@@ -2,7 +2,7 @@
 
 Analisador de futebol ao vivo que roda 100% no seu PC. Ele captura a aba do navegador com o jogo, detecta jogadores e bola, projeta tudo num mapa 3D visto de cima e gera estatísticas e insights em tempo real, sem nenhum serviço pago.
 
-**Status:** Fase 3 (campo e mapa 3D). Os jogadores rastreados e a bola aparecem num mapa 3D do campo, em metros, atualizado ao vivo; closes, replays e cortes de câmera pausam o mapa.
+**Status:** Fase 3 (campo e padrões dos times). O app identifica o campo na imagem, converte as posições para metros e mostra, num campo 3D, como cada time ataca e como defende: formação, posições médias, linha de defesa, largura, profundidade, corredor preferido e mapa de calor.
 
 ## Estrutura
 
@@ -55,11 +55,23 @@ Hardware de referência: RTX 4060 8 GB (cenário A do planejamento).
 - **Pontos do campo:** o modelo `football-pitch-detection.pt` (YOLOv8 pose do [roboflow/sports](https://github.com/roboflow/sports), AGPL-3.0) acha até 32 pontos do campo: cantos, áreas, meio-campo, círculo central e marcas do pênalti. Ele é baixado sozinho na primeira vez que o backend sobe (cerca de 140 MB), do mesmo Google Drive indicado no `setup.sh` daquele projeto.
 - **Pixel para metros:** com 4 ou mais pontos confiáveis (e que não estejam todos numa reta), uma homografia com RANSAC leva o pé de cada jogador para metros num campo oficial de 105 × 68 m. A homografia é suavizada entre frames.
 - **Closes, replays e cortes:** um corte de câmera é detectado pela mudança brusca de cores entre frames; nele o tracking recomeça, para não juntar jogadores de tomadas diferentes. Closes (alguém muito grande na tela) e frames sem pontos suficientes pausam o mapa, que fica na última posição conhecida.
-- **Mapa 3D:** feito em Three.js. Gramado com as linhas oficiais, jogadores nas cores dos times (goleiro com anel roxo, árbitro em laranja), bola com rastro dos últimos 3 s e a área que a câmera da TV está mostrando. Os bonecos andam suavemente entre as atualizações. Dá para alternar entre vista de cima e vista 3D, girar e aproximar.
-- **Fora da imagem:** a câmera da TV não mostra o campo inteiro. Quem sai da imagem continua no mapa esmaecido, na última posição conhecida, por até 5 s.
-- **Linhas do campo sobre o vídeo:** com a opção ligada, as linhas projetadas aparecem em rosa sobre o vídeo. Se elas coincidem com as linhas reais do gramado, o mapa está certo.
-- **Só o mapa:** o link "Abrir só o mapa" abre o mapa numa janela própria, que recebe os dados da aba que está capturando.
+- **Fora da imagem:** quem sai da imagem continua valendo, na última posição conhecida, por até 4 s; um ID novo que aparece perto assume essa posição.
+- **Recorte automático:** a página acha sozinha onde está o vídeo dentro da aba (a área que muda entre frames) e analisa só ela.
+- **Linhas do campo sobre o vídeo:** com a opção ligada, as linhas projetadas aparecem em rosa sobre o vídeo. Se elas coincidem com as linhas reais do gramado, as posições em metros estão certas.
 - **Diagnóstico:** `localhost:8000/debug/state`, `/debug/snapshot.jpg` (último frame com caixas e linhas do campo) e `/debug/map.png` (mapa em 2D).
+
+## Padrões dos times (como cada um ataca e defende)
+
+O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time em 4 opções: **Time A ataca**, **Time A defende**, **Time B ataca** e **Time B defende**.
+
+- **Quem ataca:** em cada momento, o time do jogador mais perto da bola (até 4 m) está atacando. Sem bola visível, vale o time mais avançado em direção ao gol adversário. A posse vale por até 3 s depois da última vez que a bola foi vista.
+- **Lado de cada time:** vem da posição dos goleiros (peso maior) e de onde cada time fica, com memória de cerca de 2 minutos; por isso os padrões continuam corretos depois da troca de lado no intervalo.
+- **Normalização:** as posições são giradas para cada time aparecer sempre atacando da esquerda para a direita. Esquerda e direita são do ponto de vista do time.
+- **Formação:** as posições de cada time em cada fase são agrupadas em 10 posições médias (k-means com vários recomeços). Elas são separadas em linhas pela profundidade, o que dá a formação (por exemplo, 4-4-2).
+- **Números:** altura média da linha de defesa (bloco baixo abaixo de 30 m do próprio gol, médio até 42 m, alto acima), largura, profundidade da defesa ao ataque, corredor preferido no último terço e mapa de calor.
+- **Quando aparece:** cada opção precisa de pelo menos 40 momentos daquela fase em tomada aberta com o campo identificado. Os padrões são recalculados a cada 10 s, continuam acumulando mesmo se a captura recomeçar e só zeram no botão "Zerar padrões".
+- **Limite:** a câmera da TV não mostra o campo inteiro, então as médias usam quem aparece na imagem (e quem saiu há até 2 s). É uma aproximação que melhora com mais minutos de jogo.
+- **Diagnóstico:** `localhost:8000/debug/patterns`.
 
 ## Modelo de futebol (opcional)
 

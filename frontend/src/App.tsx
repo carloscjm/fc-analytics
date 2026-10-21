@@ -4,16 +4,28 @@ import {
   type BenchmarkMessage,
   type ConnStatus,
   type DetectionsMessage,
+  type PatternsInfo,
   type StatusMessage,
 } from "./backend";
 import { chooseTab, FrameSender, type SenderCounters } from "./capture";
 import { DetectionOverlay, ROLE_COLORS, teamColors } from "./DetectionOverlay";
-import { FieldMap3D, type CameraMode } from "./FieldMap3D";
+import { PatternField3D, type CameraMode } from "./PatternField3D";
 import { RollingStats, type LiveStats } from "./stats";
 
 const INTERVALS = [100, 125, 150, 175, 200];
 const EMPTY_STATS: LiveStats = { fps: 0, latencyMeanMs: null, latencyP95Ms: null, inferMs: null, serverMs: null };
 const EMPTY_COUNTERS: SenderCounters = { sent: 0, skipped: 0, lost: 0 };
+const OPTIONS = [
+  { key: "0-ataque", team: 0, phase: "ataque" },
+  { key: "0-defesa", team: 0, phase: "defesa" },
+  { key: "1-ataque", team: 1, phase: "ataque" },
+  { key: "1-defesa", team: 1, phase: "defesa" },
+] as const;
+
+function fmtDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)} s de jogo`;
+  return `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s de jogo`;
+}
 
 function fmt(value: number | null | undefined, unit = "ms"): string {
   return value === null || value === undefined ? "—" : `${Math.round(value)} ${unit}`;
@@ -38,16 +50,20 @@ export default function App() {
   const [benchmark, setBenchmark] = useState<BenchmarkMessage | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [cameraMode, setCameraMode] = useState<CameraMode>("top");
-  const [showIds, setShowIds] = useState(true);
-  const [showView, setShowView] = useState(true);
+  const [showHeat, setShowHeat] = useState(true);
+  const [selected, setSelected] = useState<string>("0-ataque");
+  const [patterns, setPatterns] = useState<PatternsInfo | null>(null);
   const [showPitch, setShowPitch] = useState(true);
   const [autoCrop, setAutoCrop] = useState(true);
-  const mapOnly = useMemo(() => new URLSearchParams(location.search).has("mapa"), []);
 
   useEffect(() => {
     const offStatus = client.onStatus(setConn);
     const offMessage = client.onMessage((msg) => {
-      if (msg.type === "status") setServer(msg);
+      if (msg.type === "status") {
+        setServer(msg);
+        if (msg.patterns) setPatterns(msg.patterns);
+      }
+      if (msg.type === "patterns") setPatterns(msg);
       if (msg.type === "benchmark") setBenchmark(msg);
       if (msg.type === "error") setNotice(msg.detail);
       if (msg.type === "detections") {
@@ -67,6 +83,7 @@ export default function App() {
         }
         // Resultados de outra aba (captura numa janela, mapa em outra) também atualizam o mapa.
         setResult(msg);
+        if (msg.patterns) setPatterns(msg.patterns);
       }
     });
     client.start();
@@ -146,27 +163,27 @@ export default function App() {
   const field = result?.map ?? null;
   const pitchState = server?.pitch?.state;
 
-  let sceneText = "Aguardando a captura";
-  let sceneKind: "live" | "paused" | "idle" = "idle";
-  if (pitchState === "baixando") sceneText = "Baixando o modelo do campo (cerca de 140 MB, só na primeira vez)...";
-  else if (pitchState === "carregando") sceneText = "Carregando o modelo do campo...";
-  else if (pitchState === "erro")
-    sceneText = `Modelo do campo indisponível (${server?.pitch?.error ?? "erro"}). Feche e abra o app para tentar de novo.`;
-  else if (field?.scene === "ao vivo") {
-    sceneText = "Ao vivo";
-    sceneKind = "live";
-  } else if (field?.scene === "close") {
-    sceneText = "Pausado · close ou replay";
-    sceneKind = "paused";
-  } else if (field?.scene === "sem campo") {
-    sceneText = "Pausado · campo não identificado na imagem";
-    sceneKind = "paused";
-  }
+  const option = patterns?.options[selected] ?? null;
+  const pattern = option?.pattern ?? null;
+  const optionColor = option ? colors[option.team] : colors[0];
 
-  const mapCard = (
-    <section className={`card map-card ${mapOnly ? "full" : ""}`}>
+  let fieldNote = "Aguardando a captura";
+  if (pitchState === "baixando") fieldNote = "Baixando o modelo do campo (cerca de 140 MB, só na primeira vez)...";
+  else if (pitchState === "carregando") fieldNote = "Carregando o modelo do campo...";
+  else if (pitchState === "erro")
+    fieldNote = `Modelo do campo indisponível (${server?.pitch?.error ?? "erro"}). Feche e abra o app para tentar de novo.`;
+  else if (field?.scene === "ao vivo") fieldNote = "Coletando: jogo em tomada aberta";
+  else if (field?.scene === "close") fieldNote = "Pausado: close ou replay";
+  else if (field?.scene === "sem campo") fieldNote = "Pausado: campo não identificado na imagem";
+
+  const source = patterns?.phaseSource;
+  const sourceTotal = source ? source.bola + source["avanço"] + source["sem fase"] : 0;
+  const pct = (v: number) => (sourceTotal ? Math.round((100 * v) / sourceTotal) : 0);
+
+  const patternCard = (
+    <section className="card map-card">
       <div className="map-head">
-        <h2>Mapa do campo</h2>
+        <h2>Padrões dos times</h2>
         <div className="map-controls">
           <div className="seg">
             <button className={cameraMode === "top" ? "on" : ""} onClick={() => setCameraMode("top")}>
@@ -177,64 +194,123 @@ export default function App() {
             </button>
           </div>
           <label className="check">
-            <input type="checkbox" checked={showIds} onChange={(e) => setShowIds(e.target.checked)} />
-            IDs
+            <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} />
+            Mapa de calor
           </label>
-          <label className="check">
-            <input type="checkbox" checked={showView} onChange={(e) => setShowView(e.target.checked)} />
-            Área da câmera
-          </label>
-          {!mapOnly && (
-            <a className="link" href="?mapa" target="_blank" rel="noreferrer">
-              Abrir só o mapa
-            </a>
-          )}
+          <button className="link" onClick={() => client.send({ type: "reset_patterns" })}>
+            Zerar padrões
+          </button>
         </div>
       </div>
+
+      <div className="options" role="tablist">
+        {OPTIONS.map(({ key, team, phase }) => {
+          const o = patterns?.options[key];
+          const progress = o ? Math.min(1, o.frames / o.needed) : 0;
+          return (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={selected === key}
+              className={`option ${selected === key ? "on" : ""}`}
+              onClick={() => setSelected(key)}
+            >
+              <span className="swatch big" style={{ background: colors[team] }} />
+              <span className="option-text">
+                <strong>
+                  Time {team === 0 ? "A" : "B"} {phase === "ataque" ? "ataca" : "defende"}
+                </strong>
+                <span className="muted small">
+                  {o?.pattern ? o.pattern.formation : `coletando ${Math.round(progress * 100)}%`}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       <div className="map-wrap">
-        <FieldMap3D map={field} colors={colors} mode={cameraMode} showIds={showIds} showView={showView} />
-        <div className={`scene-badge ${sceneKind}`}>
+        <PatternField3D pattern={pattern} color={optionColor} mode={cameraMode} showHeat={showHeat} />
+        <div className="scene-badge">
           <span className="dot" />
-          {sceneText}
+          {fieldNote}
         </div>
+        {!pattern && (
+          <div className="map-empty">
+            <p>
+              {option
+                ? `Coletando dados: ${option.frames} de ${option.needed} momentos com o Time ${
+                    option.team === 0 ? "A" : "B"
+                  } ${option.phase === "ataque" ? "atacando" : "defendendo"}.`
+                : "Os padrões aparecem depois de alguns minutos de jogo analisado."}
+            </p>
+            <p className="small">O padrão só usa as tomadas abertas, com o campo identificado.</p>
+          </div>
+        )}
       </div>
+
+      {pattern && option && (
+        <div className="stats">
+          <div className="stat">
+            <span className="muted small">Formação</span>
+            <strong className="huge">{pattern.formation}</strong>
+          </div>
+          <div className="stat">
+            <span className="muted small">Linha de defesa</span>
+            <strong>{Math.round(pattern.lineHeight)} m do próprio gol</strong>
+            <span className="muted small">bloco {pattern.block}</span>
+          </div>
+          <div className="stat">
+            <span className="muted small">Largura</span>
+            <strong>{Math.round(pattern.width)} m</strong>
+            <span className="muted small">de um lado ao outro</span>
+          </div>
+          <div className="stat">
+            <span className="muted small">Profundidade</span>
+            <strong>{Math.round(pattern.depth)} m</strong>
+            <span className="muted small">da defesa ao ataque</span>
+          </div>
+          {option.phase === "ataque" && pattern.corridors && (
+            <div className="stat">
+              <span className="muted small">No último terço</span>
+              <strong>
+                {pattern.corridors.esquerda >= pattern.corridors.direita ? "mais pela esquerda" : "mais pela direita"}
+              </strong>
+              <span className="muted small">
+                esq. {Math.round(pattern.corridors.esquerda * 100)}% · centro {Math.round(pattern.corridors.centro * 100)}% ·
+                dir. {Math.round(pattern.corridors.direita * 100)}%
+              </span>
+            </div>
+          )}
+          <div className="stat">
+            <span className="muted small">Base</span>
+            <strong>{fmtDuration(option.seconds)}</strong>
+            <span className="muted small">{option.frames} momentos analisados</span>
+          </div>
+        </div>
+      )}
+
       <p className="muted small map-foot">
-        Arraste para girar, use a roda do mouse para aproximar. Jogadores esmaecidos estão fora da imagem da TV, na
-        última posição conhecida.
-        {field && (
+        O time aparece sempre atacando da esquerda para a direita; esquerda e direita são do ponto de vista dele. Cada
+        boneco é uma posição média e a mancha em volta mostra onde ela costuma variar. A câmera da TV não mostra o campo
+        inteiro, então é uma aproximação que melhora com mais minutos de jogo.
+        {sourceTotal > 0 && (
           <>
             {" "}
-            Pontos do campo: {field.keypoints} · no mapa: {field.players.filter((p) => !p.g).length} visíveis,{" "}
-            {field.players.filter((p) => p.g).length} fora da imagem
-            {tracking?.cutsLastMinute !== undefined && <> · cortes no último minuto: {tracking.cutsLastMinute}</>}
+            Quem ataca foi decidido pela bola em {pct(source!.bola)}% dos momentos e pelo avanço dos times em{" "}
+            {pct(source!["avanço"])}%.
           </>
         )}
       </p>
     </section>
   );
 
-  if (mapOnly) {
-    return (
-      <div className="app map-only">
-        <header className="topbar">
-          <div>
-            <h1>FC Analytics · mapa</h1>
-            <p className="subtitle">
-              Conexão: <span className={`pill pill-${conn}`}>{conn}</span> · a captura acontece na outra aba
-            </p>
-          </div>
-        </header>
-        <main className="map-only-main">{mapCard}</main>
-      </div>
-    );
-  }
-
   return (
     <div className="app">
       <header className="topbar">
         <div>
           <h1>FC Analytics</h1>
-          <p className="subtitle">Fase 3 · mapa do campo</p>
+          <p className="subtitle">Padrões de ataque e defesa</p>
         </div>
         <div className="controls">
           {capturing ? (
@@ -310,7 +386,7 @@ export default function App() {
 
       <main className="layout">
         <div className="main-col">
-        {mapCard}
+        {patternCard}
         <section className="stage">
           <video ref={setVideo} muted playsInline className="video" />
           <DetectionOverlay
