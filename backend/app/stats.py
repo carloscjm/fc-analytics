@@ -76,7 +76,11 @@ CREATE TABLE IF NOT EXISTS plays (
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY, match_id INTEGER NOT NULL, t REAL, kind TEXT, team INTEGER
 );
+CREATE TABLE IF NOT EXISTS insights (
+    id INTEGER PRIMARY KEY, match_id INTEGER NOT NULL, wall REAL, t REAL, kind TEXT, team INTEGER, payload TEXT
+);
 CREATE INDEX IF NOT EXISTS frames_match ON frames (match_id);
+CREATE INDEX IF NOT EXISTS insights_match ON insights (match_id);
 CREATE INDEX IF NOT EXISTS positions_match ON positions (match_id);
 CREATE INDEX IF NOT EXISTS plays_match ON plays (match_id);
 CREATE INDEX IF NOT EXISTS events_match ON events (match_id);
@@ -146,6 +150,26 @@ class MatchStore:
         with self._lock:
             self._db.execute("DELETE FROM events WHERE id = ?", (event_id,))
             self._db.commit()
+
+    # ---- insights da Fase 5 (gravados na hora) ----
+
+    def add_insight(self, match_id: int, item: dict) -> int:
+        import json
+
+        with self._lock:
+            cur = self._db.execute(
+                "INSERT INTO insights (match_id, wall, t, kind, team, payload) VALUES (?, ?, ?, ?, ?, ?)",
+                (match_id, item.get("wall"), item.get("t"), item.get("kind"), item.get("team"), json.dumps(item, ensure_ascii=False)),
+            )
+            self._db.commit()
+            return int(cur.lastrowid)
+
+    def load_insights(self, match_id: int) -> list[dict]:
+        import json
+
+        with self._lock:
+            rows = self._db.execute("SELECT id, payload FROM insights WHERE match_id = ? ORDER BY id", (match_id,)).fetchall()
+        return [{**json.loads(payload), "id": int(row_id)} for row_id, payload in rows]
 
     # ---- frames (em lote) ----
 

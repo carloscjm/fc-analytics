@@ -25,7 +25,8 @@ import numpy as np
 
 from .ball import BallTracker
 from .patterns import PatternStore
-from .stats import MatchStore, StatsTracker
+from .insights import InsightEngine
+from .stats import MatchStore, StatsTracker, default_data_dir
 from .fieldmap import FieldMap
 from .pitch import LAST_FIT, CutDetector, HomographyTracker, Keypoints, is_close_up, visible_area
 from .teams import OUTLIER, TeamClassifier, jersey_feature
@@ -94,6 +95,8 @@ class Pipeline:
             log.exception("SQLite indisponível; as estatísticas ficam só na memória")
             store = None
         self.stats = StatsTracker(store)
+        # Insights da Fase 5: alertas por regra e análises do LLM local (Ollama).
+        self.insights = InsightEngine(store, settings_path=default_data_dir() / "llm.json")
         self.stats_latest: dict[str, Any] | None = None
         self.stats_version = 0
         self.stats_sent = -1
@@ -352,6 +355,10 @@ class Pipeline:
     def refresh_stats(self) -> dict[str, Any]:
         self.stats_latest = self.stats.summary()
         self.stats_version += 1
+        try:
+            self.insights.on_stats(self.stats_latest, self.patterns_latest)
+        except Exception:  # noqa: BLE001
+            log.exception("falha nos insights")
         return self.stats_latest
 
     def latest_stats(self) -> dict[str, Any]:

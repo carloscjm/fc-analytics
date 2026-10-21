@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -23,7 +24,7 @@ from .protocol import FrameFormatError, parse_frame
 
 FOOTBALL_MODEL = "football-player-detection.pt"
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 log = logging.getLogger("fc-analytics")
 
 
@@ -115,8 +116,12 @@ async def lifespan(app: FastAPI):
             await broadcast(app, status_message(app.state.detector))
 
     task = asyncio.create_task(warm())
+    # Nos testes o envio periódico fica desligado, para as mensagens chegarem numa ordem previsível.
+    pump = asyncio.create_task(insights_pump(app)) if os.environ.get("FCA_INSIGHTS_PUMP", "1") != "0" else None
     yield
     task.cancel()
+    if pump is not None:
+        pump.cancel()
 
 
 app = FastAPI(title="FC Analytics", version=VERSION, lifespan=lifespan)
@@ -127,6 +132,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+async def insights_pump(app: FastAPI) -> None:
+    """Confere o Ollama e a hora da próxima análise, e manda o feed de insights para as abas quando ele muda."""
+    sent = -1
+    ticks = 0
+    while True:
+        await asyncio.sleep(1.0)
+        pipeline = getattr(app.state, "pipeline", None)
+        if pipeline is None:
+            continue
+        try:
+            if ticks % 5 == 0:
+                await asyncio.to_thread(pipeline.insights.tick)
+            ticks += 1
+            if pipeline.insights.version != sent:
+                sent = pipeline.insights.version
+                await broadcast(app, {"type": "insights", **pipeline.insights.snapshot()})
+        except Exception:  # noqa: BLE001
+            log.exception("falha ao enviar os insights")
 
 
 def now_ms() -> float:
@@ -276,6 +301,12 @@ def debug_stats() -> dict:
     return {"ready": True, **pipeline.latest_stats()}
 
 
+@app.get("/debug/insights")
+def debug_insights() -> dict:
+    pipeline = getattr(app.state, "pipeline", None)
+    return {"ready": False} if pipeline is None else {"ready": True, **pipeline.insights.snapshot()}
+
+
 @app.get("/debug/patterns")
 def debug_patterns() -> dict:
     pipeline = getattr(app.state, "pipeline", None)
@@ -370,6 +401,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
         first_status["patterns"] = pipeline.latest_patterns()
     if pipeline is not None:
         first_status["stats"] = await asyncio.to_thread(pipeline.latest_stats)
+        first_status["insights"] = pipeline.insights.snapshot()
     await send(websocket, first_status)
 
     recent_frames: deque[np.ndarray] = websocket.app.state.recent_frames
@@ -538,6 +570,27 @@ async def handle_command(
         await broadcast(websocket.app, {"type": "stats", "stats": stats})
         if kind == "new_match":
             await broadcast(websocket.app, {"type": "patterns", **pipeline.latest_patterns()})
+
+    elif kind in ("llm_analyze_now", "llm_set_model", "llm_pull", "llm_set_interval"):
+        pipeline = websocket.app.state.pipeline
+        if pipeline is None:
+            await send(websocket, {"type": "error", "detail": "Os insights precisam das bibliotecas do tracking."})
+            return
+        engine = pipeline.insights
+        try:
+            if kind == "llm_analyze_now":
+                if engine.latest_stats is None:
+                    await asyncio.to_thread(pipeline.refresh_stats)
+                if not engine.analyze_now():
+                    await send(websocket, {"type": "error", "detail": engine.llm.last_error or "O LLM está ocupado."})
+            elif kind == "llm_set_model":
+                engine.set_model(str(data.get("model") or ""))
+            elif kind == "llm_pull":
+                engine.pull(str(data.get("model") or "") or None)
+            else:
+                engine.set_interval(int(data.get("seconds", 0)))
+        except ValueError as exc:
+            await send(websocket, {"type": "error", "detail": str(exc)})
 
     elif kind == "recalibrate_teams":
         if websocket.app.state.pipeline is not None:
