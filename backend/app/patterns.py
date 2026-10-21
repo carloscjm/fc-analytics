@@ -151,7 +151,8 @@ def split_lines(xs: np.ndarray, back: int | None = None, sizes: tuple[int, ...] 
 # Linha de defesa contada quadro a quadro
 # ---------------------------------------------------------------------------
 
-BACK_LINE_BAND_M = 7.0  # quem está até 7 m à frente do defensor mais recuado faz parte da última linha
+BACK_LINE_BAND_M = 5.0  # quem está até 5 m à frente do defensor mais recuado faz parte da última linha
+BACK_LINE_MIN_WIDTH_M = 22.0  # uma linha de defesa de verdade ocupa boa parte da largura do campo
 BACK_LINE_MIN_FRAMES = 30
 BACK_LINE_MIN_SHARE = 0.45
 BACK_LINE_KEEP = 1500
@@ -170,6 +171,8 @@ def back_line_members(points: np.ndarray, view: np.ndarray | None) -> np.ndarray
     members = int(mask.sum())
     if not 2 <= members <= 6 or members == len(points):
         return None
+    if float(np.ptp(points[mask][:, 1])) < BACK_LINE_MIN_WIDTH_M:
+        return None  # dois ou três jogadores juntos não são a linha toda (alguém ficou fora da detecção)
     poly = view.astype(np.float32).reshape(-1, 1, 2)
     grid = [
         (x, y)
@@ -301,7 +304,7 @@ def best_roles(points: np.ndarray, restarts: int = 6) -> tuple[np.ndarray, np.nd
 
 
 def compute_pattern(
-    frames: list[np.ndarray], back: int | None = None, forced: tuple[int, ...] | None = None
+    frames: list[np.ndarray], back_count: int | None = None, forced: tuple[int, ...] | None = None
 ) -> dict[str, Any] | None:
     if len(frames) < MIN_FRAMES_FOR_PATTERN:
         return None
@@ -316,7 +319,7 @@ def compute_pattern(
             for j in range(ROLES)
         ]
     )
-    lines = split_lines(centers[:, 0], back=back, sizes=forced)
+    lines = split_lines(centers[:, 0], back=back_count, sizes=forced)
     formation = "-".join(str(len(g)) for g in lines)
     line_of = np.zeros(ROLES, dtype=int)
     for i, g in enumerate(lines):
@@ -348,7 +351,7 @@ def compute_pattern(
 
     return {
         "formation": formation,
-        "formationSource": "manual" if forced is not None else ("linha" if back is not None else "auto"),
+        "formationSource": "manual" if forced is not None else ("linha" if back_count is not None else "auto"),
         "roles": [
             {
                 "x": round(float(c[0]), 2),
@@ -559,7 +562,7 @@ class PatternStore:
         }
         for (t, phase), f in frames.items():
             sizes = overrides.get((t, phase))
-            pattern = compute_pattern(f, back=backs[(t, phase)]["estimate"], forced=sizes)
+            pattern = compute_pattern(f, back_count=backs[(t, phase)]["estimate"], forced=sizes)
             out["options"][f"{t}-{phase}"] = {
                 "team": t,
                 "phase": phase,

@@ -152,6 +152,9 @@ def test_back_line_count_needs_the_whole_width_in_view():
     half = np.array([[0, 0], [105, 0], [105, 30], [0, 30]], np.float32)  # só metade da largura na imagem
     assert count_back_line(pts, half) is None
     assert count_back_line(pts, None) is None
+    # Dois jogadores colados lá atrás não são a linha toda.
+    huddle = np.array([(20, 30), (21, 34), (40, 10), (40, 30), (42, 50), (60, 34)], np.float32)
+    assert count_back_line(huddle, np.array(FULL_VIEW, np.float32)) is None
 
 
 def test_back_count_and_manual_choice_decide_the_formation():
@@ -183,6 +186,8 @@ def test_store_counts_the_back_line_and_respects_overrides():
     assert defense["backLine"]["estimate"] == 3
     assert defense["pattern"]["formation"].startswith("3-")
     assert defense["pattern"]["formationSource"] == "linha"
+    # O time 1 (4-4-2) também teve a linha contada enquanto atacava: 4 atrás.
+    assert summary["options"]["1-ataque"]["backLine"]["estimate"] == 4
     store.set_override(0, "defesa", (5, 3, 2))
     manual = store.summary()["options"]["0-defesa"]
     assert manual["pattern"]["formation"] == "5-3-2" and manual["override"] == "5-3-2"
