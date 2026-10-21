@@ -710,6 +710,7 @@ export default function App() {
           ends={ends}
           showRoles={showRoles}
           arrows={arrows}
+          showLines={!duo}
         />
         <div className="legend">
           {view.transition !== undefined ? (
@@ -726,14 +727,16 @@ export default function App() {
             ))
           )}
         </div>
-        <div className="legend sectors">
-          {(Object.entries(SECTOR_COLORS) as [string, string][]).map(([name, color]) => (
-            <span key={name}>
-              <span className="bar" style={{ background: color }} />
-              {name}
-            </span>
-          ))}
-        </div>
+        {!duo && (
+          <div className="legend sectors">
+            {(Object.entries(SECTOR_COLORS) as [string, string][]).map(([name, color]) => (
+              <span key={name}>
+                <span className="bar" style={{ background: color }} />
+                {name}
+              </span>
+            ))}
+          </div>
+        )}
         <div className="scene-badge">
           <span className="dot" />
           {fieldNote}

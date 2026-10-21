@@ -107,7 +107,7 @@ function sectorOf(line: number, last: number): keyof typeof SECTOR_COLORS {
   return line === last ? "ataque" : "meio";
 }
 
-function Team({ layer, at }: { layer: FlowLayer; at: number }) {
+function Team({ layer, at, showLines }: { layer: FlowLayer; at: number; showLines: boolean }) {
   const flow = layer.flow!;
   const roles: FlowRole[] = flow.stages[0].roles;
   const pts = roles.map((_, j) => positionAt(flow, j, at, layer.mirror));
@@ -118,7 +118,7 @@ function Team({ layer, at }: { layer: FlowLayer; at: number }) {
   const nearest = flow.stages[Math.round(at)].roles;
   return (
     <g>
-      <g opacity={0.75}>
+      <g opacity={0.75} display={showLines ? undefined : "none"}>
         {[...lines.entries()].map(([line, group]) =>
           group.length < 2 ? null : (
             <polyline
@@ -221,7 +221,7 @@ export function FlowPitch({ layers }: { layers: FlowLayer[] }) {
         )}
         <g opacity={moment.opacity}>
           {shown.map((layer, i) => (
-            <Team key={i} layer={layer} at={moment.at} />
+            <Team key={i} layer={layer} at={moment.at} showLines={shown.length === 1} />
           ))}
         </g>
       </svg>

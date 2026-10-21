@@ -39,6 +39,8 @@ interface Props {
   /** nome da posição (LE, ZAG, VOL...) em cima de cada jogador */
   showRoles: boolean;
   arrows?: FieldArrow[];
+  /** linhas da formação (desligadas quando os dois times aparecem juntos) */
+  showLines?: boolean;
 }
 
 const MAX_LAYERS = 2;
@@ -350,7 +352,7 @@ function placeCamera(state: SceneState, mode: CameraMode, width: number, height:
 }
 
 /** Campo 3D com o padrão de um time: posições médias, linhas da formação e mapa de calor. */
-export function PatternField3D({ layers, mode, showHeat, ends, showRoles, arrows }: Props) {
+export function PatternField3D({ layers, mode, showHeat, ends, showRoles, arrows, showLines = true }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<SceneState | null>(null);
   const modeRef = useRef(mode);
@@ -550,7 +552,7 @@ export function PatternField3D({ layers, mode, showHeat, ends, showRoles, arrows
 
       // Linhas da formação: liga as posições de cada linha, de um lado ao outro,
       // em azul (defesa), amarelo (meio-campo) ou vermelho (ataque).
-      if (pattern && layer && !layer.ghost) {
+      if (showLines && pattern && layer && !layer.ghost) {
         const byLine = new Map<number, PatternRole[]>();
         for (const r of roles) byLine.set(r.line, [...(byLine.get(r.line) ?? []), r]);
         const lineCount = Math.max(...roles.map((r) => r.line)) + 1;
@@ -587,7 +589,7 @@ export function PatternField3D({ layers, mode, showHeat, ends, showRoles, arrows
       if (length < 1.5) continue;
       state.marks.add(new THREE.ArrowHelper(dir.normalize(), from, length - 1.2, 0xffffff, 2.4, 1.5));
     }
-  }, [layers, showHeat, showRoles, arrows, mode]);
+  }, [layers, showHeat, showRoles, arrows, mode, showLines]);
 
   return <div ref={hostRef} className="map3d" />;
 }
