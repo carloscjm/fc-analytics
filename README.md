@@ -62,7 +62,7 @@ Hardware de referência: RTX 4060 8 GB (cenário A do planejamento).
 
 ## Padrões dos times (como cada um ataca e defende)
 
-O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time em 4 opções: **Time A ataca**, **Time A defende**, **Time B ataca** e **Time B defende**.
+O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time em 6 opções: **Time A ataca**, **Time A defende**, **Time B ataca**, **Time B defende** e as duas combinadas, **A ataca × B defende** e **B ataca × A defende**. Nas combinadas, os dois padrões vêm dos mesmos momentos do jogo: o time que ataca vai para a direita e o que defende aparece girado, defendendo o gol da direita.
 
 - **Quem ataca:** em cada momento, o time do jogador mais perto da bola (até 4 m) está atacando. Sem bola visível, vale o time mais avançado em direção ao gol adversário. A posse vale por até 3 s depois da última vez que a bola foi vista.
 - **Lado de cada time:** vem da posição dos goleiros (peso maior) e de onde cada time fica, com memória de cerca de 2 minutos; por isso os padrões continuam corretos depois da troca de lado no intervalo.

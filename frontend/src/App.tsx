@@ -4,23 +4,105 @@ import {
   type BenchmarkMessage,
   type ConnStatus,
   type DetectionsMessage,
+  type PatternOption,
   type PatternsInfo,
+  type TeamPattern,
   type StatusMessage,
 } from "./backend";
 import { chooseTab, FrameSender, type SenderCounters } from "./capture";
 import { DetectionOverlay, ROLE_COLORS, teamColors } from "./DetectionOverlay";
-import { PatternField3D, type CameraMode } from "./PatternField3D";
+import { PatternField3D, type CameraMode, type PatternLayer } from "./PatternField3D";
 import { RollingStats, type LiveStats } from "./stats";
 
 const INTERVALS = [100, 125, 150, 175, 200];
 const EMPTY_STATS: LiveStats = { fps: 0, latencyMeanMs: null, latencyP95Ms: null, inferMs: null, serverMs: null };
 const EMPTY_COUNTERS: SenderCounters = { sent: 0, skipped: 0, lost: 0 };
-const OPTIONS = [
-  { key: "0-ataque", team: 0, phase: "ataque" },
-  { key: "0-defesa", team: 0, phase: "defesa" },
-  { key: "1-ataque", team: 1, phase: "ataque" },
-  { key: "1-defesa", team: 1, phase: "defesa" },
-] as const;
+interface ViewPart {
+  /** chave do padrão no backend: "<time>-<fase>" */
+  option: string;
+  team: 0 | 1;
+  /** gira o padrão para o outro lado do campo (o time que defende, quando os dois aparecem juntos) */
+  mirror: boolean;
+}
+
+interface View {
+  key: string;
+  title: string;
+  parts: ViewPart[];
+}
+
+const VIEWS: View[] = [
+  { key: "0-ataque", title: "Time A ataca", parts: [{ option: "0-ataque", team: 0, mirror: false }] },
+  { key: "0-defesa", title: "Time A defende", parts: [{ option: "0-defesa", team: 0, mirror: false }] },
+  { key: "1-ataque", title: "Time B ataca", parts: [{ option: "1-ataque", team: 1, mirror: false }] },
+  { key: "1-defesa", title: "Time B defende", parts: [{ option: "1-defesa", team: 1, mirror: false }] },
+  {
+    key: "A-x-B",
+    title: "A ataca × B defende",
+    parts: [
+      { option: "0-ataque", team: 0, mirror: false },
+      { option: "1-defesa", team: 1, mirror: true },
+    ],
+  },
+  {
+    key: "B-x-A",
+    title: "B ataca × A defende",
+    parts: [
+      { option: "1-ataque", team: 1, mirror: false },
+      { option: "0-defesa", team: 0, mirror: true },
+    ],
+  },
+];
+
+function teamName(team: 0 | 1): string {
+  return team === 0 ? "Time A" : "Time B";
+}
+
+function PatternStats({ option, pattern, heading }: { option: PatternOption; pattern: TeamPattern; heading?: string }) {
+  return (
+    <div className="stats-group">
+      {heading && <p className="stats-heading">{heading}</p>}
+      <div className="stats">
+        <div className="stat">
+          <span className="muted small">Formação</span>
+          <strong className="huge">{pattern.formation}</strong>
+        </div>
+        <div className="stat">
+          <span className="muted small">Linha de defesa</span>
+          <strong>{Math.round(pattern.lineHeight)} m do próprio gol</strong>
+          <span className="muted small">bloco {pattern.block}</span>
+        </div>
+        <div className="stat">
+          <span className="muted small">Largura</span>
+          <strong>{Math.round(pattern.width)} m</strong>
+          <span className="muted small">de um lado ao outro</span>
+        </div>
+        <div className="stat">
+          <span className="muted small">Profundidade</span>
+          <strong>{Math.round(pattern.depth)} m</strong>
+          <span className="muted small">da defesa ao ataque</span>
+        </div>
+        {option.phase === "ataque" && pattern.corridors && (
+          <div className="stat">
+            <span className="muted small">No último terço</span>
+            <strong>
+              {pattern.corridors.esquerda >= pattern.corridors.direita ? "mais pela esquerda" : "mais pela direita"}
+            </strong>
+            <span className="muted small">
+              esq. {Math.round(pattern.corridors.esquerda * 100)}% · centro {Math.round(pattern.corridors.centro * 100)}% ·
+              dir. {Math.round(pattern.corridors.direita * 100)}%
+            </span>
+          </div>
+        )}
+        <div className="stat">
+          <span className="muted small">Base</span>
+          <strong>{fmtDuration(option.seconds)}</strong>
+          <span className="muted small">{option.frames} momentos analisados</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function fmtDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)} s de jogo`;
@@ -163,9 +245,19 @@ export default function App() {
   const field = result?.map ?? null;
   const pitchState = server?.pitch?.state;
 
-  const option = patterns?.options[selected] ?? null;
-  const pattern = option?.pattern ?? null;
-  const optionColor = option ? colors[option.team] : colors[0];
+  const view = VIEWS.find((v) => v.key === selected) ?? VIEWS[0];
+  const viewParts = view.parts.map((part) => ({ part, option: patterns?.options[part.option] ?? null }));
+  const layers: PatternLayer[] = useMemo(
+    () =>
+      view.parts.map((part) => ({
+        pattern: patterns?.options[part.option]?.pattern ?? null,
+        color: colors[part.team],
+        mirror: part.mirror,
+      })),
+    [view, patterns, colors],
+  );
+  const missing = viewParts.filter(({ option }) => !option?.pattern);
+  const duo = view.parts.length > 1;
 
   let fieldNote = "Aguardando a captura";
   if (pitchState === "baixando") fieldNote = "Baixando o modelo do campo (cerca de 140 MB, só na primeira vez)...";
@@ -204,24 +296,29 @@ export default function App() {
       </div>
 
       <div className="options" role="tablist">
-        {OPTIONS.map(({ key, team, phase }) => {
-          const o = patterns?.options[key];
-          const progress = o ? Math.min(1, o.frames / o.needed) : 0;
+        {VIEWS.map((v) => {
+          const opts = v.parts.map((part) => patterns?.options[part.option]);
+          const progress = Math.min(...opts.map((o) => (o ? Math.min(1, o.frames / o.needed) : 0)));
+          const done = opts.every((o) => o?.pattern);
           return (
             <button
-              key={key}
+              key={v.key}
               role="tab"
-              aria-selected={selected === key}
-              className={`option ${selected === key ? "on" : ""}`}
-              onClick={() => setSelected(key)}
+              aria-selected={selected === v.key}
+              className={`option ${selected === v.key ? "on" : ""}`}
+              onClick={() => setSelected(v.key)}
             >
-              <span className="swatch big" style={{ background: colors[team] }} />
+              <span className="swatches">
+                {v.parts.map((part) => (
+                  <span key={part.option} className="swatch big" style={{ background: colors[part.team] }} />
+                ))}
+              </span>
               <span className="option-text">
-                <strong>
-                  Time {team === 0 ? "A" : "B"} {phase === "ataque" ? "ataca" : "defende"}
-                </strong>
+                <strong>{v.title}</strong>
                 <span className="muted small">
-                  {o?.pattern ? o.pattern.formation : `coletando ${Math.round(progress * 100)}%`}
+                  {done
+                    ? opts.map((o) => o!.pattern!.formation).join(" × ")
+                    : `coletando ${Math.round(progress * 100)}%`}
                 </span>
               </span>
             </button>
@@ -230,69 +327,56 @@ export default function App() {
       </div>
 
       <div className="map-wrap">
-        <PatternField3D pattern={pattern} color={optionColor} mode={cameraMode} showHeat={showHeat} />
+        <PatternField3D layers={layers} mode={cameraMode} showHeat={showHeat} />
+        {duo && (
+          <div className="legend">
+            {view.parts.map((part) => (
+              <span key={part.option}>
+                <span className="swatch" style={{ background: colors[part.team] }} />
+                {teamName(part.team)} {part.mirror ? "defendendo ←" : "atacando →"}
+              </span>
+            ))}
+          </div>
+        )}
         <div className="scene-badge">
           <span className="dot" />
           {fieldNote}
         </div>
-        {!pattern && (
+        {missing.length > 0 && (
           <div className="map-empty">
-            <p>
-              {option
-                ? `Coletando dados: ${option.frames} de ${option.needed} momentos com o Time ${
-                    option.team === 0 ? "A" : "B"
-                  } ${option.phase === "ataque" ? "atacando" : "defendendo"}.`
-                : "Os padrões aparecem depois de alguns minutos de jogo analisado."}
-            </p>
+            {patterns ? (
+              missing.map(({ part, option }) => (
+                <p key={part.option}>
+                  Coletando dados: {option?.frames ?? 0} de {option?.needed ?? 40} momentos com o {teamName(part.team)}{" "}
+                  {part.option.endsWith("ataque") ? "atacando" : "defendendo"}.
+                </p>
+              ))
+            ) : (
+              <p>Os padrões aparecem depois de alguns minutos de jogo analisado.</p>
+            )}
             <p className="small">O padrão só usa as tomadas abertas, com o campo identificado.</p>
           </div>
         )}
       </div>
 
-      {pattern && option && (
-        <div className="stats">
-          <div className="stat">
-            <span className="muted small">Formação</span>
-            <strong className="huge">{pattern.formation}</strong>
-          </div>
-          <div className="stat">
-            <span className="muted small">Linha de defesa</span>
-            <strong>{Math.round(pattern.lineHeight)} m do próprio gol</strong>
-            <span className="muted small">bloco {pattern.block}</span>
-          </div>
-          <div className="stat">
-            <span className="muted small">Largura</span>
-            <strong>{Math.round(pattern.width)} m</strong>
-            <span className="muted small">de um lado ao outro</span>
-          </div>
-          <div className="stat">
-            <span className="muted small">Profundidade</span>
-            <strong>{Math.round(pattern.depth)} m</strong>
-            <span className="muted small">da defesa ao ataque</span>
-          </div>
-          {option.phase === "ataque" && pattern.corridors && (
-            <div className="stat">
-              <span className="muted small">No último terço</span>
-              <strong>
-                {pattern.corridors.esquerda >= pattern.corridors.direita ? "mais pela esquerda" : "mais pela direita"}
-              </strong>
-              <span className="muted small">
-                esq. {Math.round(pattern.corridors.esquerda * 100)}% · centro {Math.round(pattern.corridors.centro * 100)}% ·
-                dir. {Math.round(pattern.corridors.direita * 100)}%
-              </span>
-            </div>
-          )}
-          <div className="stat">
-            <span className="muted small">Base</span>
-            <strong>{fmtDuration(option.seconds)}</strong>
-            <span className="muted small">{option.frames} momentos analisados</span>
-          </div>
+      {missing.length === 0 && (
+        <div className={duo ? "stats-duo" : ""}>
+          {viewParts.map(({ part, option }) => (
+            <PatternStats
+              key={part.option}
+              option={option!}
+              pattern={option!.pattern!}
+              heading={duo ? `${teamName(part.team)} ${part.mirror ? "defendendo" : "atacando"}` : undefined}
+            />
+          ))}
         </div>
       )}
 
       <p className="muted small map-foot">
-        O time aparece sempre atacando da esquerda para a direita; esquerda e direita são do ponto de vista dele. Cada
-        boneco é uma posição média e a mancha em volta mostra onde ela costuma variar. A câmera da TV não mostra o campo
+        {duo
+          ? "Os dois padrões vêm dos mesmos momentos do jogo: o time que ataca vai para a direita e o que defende fica do outro lado. "
+          : "O time aparece sempre atacando da esquerda para a direita; esquerda e direita são do ponto de vista dele. "}
+        Cada boneco é uma posição média e a mancha em volta mostra onde ela costuma variar. A câmera da TV não mostra o campo
         inteiro, então é uma aproximação que melhora com mais minutos de jogo.
         {sourceTotal > 0 && (
           <>

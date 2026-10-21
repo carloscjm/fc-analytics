@@ -493,7 +493,7 @@ dd.big {
 
 .options {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 10px;
 }
@@ -575,4 +575,51 @@ dd.big {
 .stat .huge {
   font-size: 22px;
   letter-spacing: 0.02em;
+}
+
+.swatches {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.legend {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f4f6f2;
+  background: rgba(11, 13, 10, 0.72);
+}
+
+.legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stats-duo {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 800px) {
+  .stats-duo {
+    grid-template-columns: 1fr;
+  }
+}
+
+.stats-heading {
+  margin: 12px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stats-duo .stats {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
 }

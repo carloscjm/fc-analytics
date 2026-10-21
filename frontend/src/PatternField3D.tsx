@@ -6,12 +6,21 @@ import { GOAL_HEIGHT, GOAL_WIDTH, LENGTH, PENALTY_SPOTS, WIDTH, pitchLines } fro
 
 export type CameraMode = "top" | "3d";
 
-interface Props {
+/** Um time desenhado no campo. `mirror` gira o padrão (que vem sempre atacando para a direita) para o outro lado. */
+export interface PatternLayer {
   pattern: TeamPattern | null;
   color: string;
+  mirror: boolean;
+}
+
+interface Props {
+  layers: PatternLayer[];
   mode: CameraMode;
   showHeat: boolean;
 }
+
+const MAX_LAYERS = 2;
+const ROLES = 10;
 
 const MARGIN = 6;
 const PX_PER_M = 14;
@@ -89,8 +98,9 @@ function goal(side: 0 | 1): THREE.Group {
 }
 
 /** Mapa de calor como textura semitransparente na cor do time. */
-function heatTexture(pattern: TeamPattern, color: string): THREE.CanvasTexture {
-  const { nx, ny, values } = pattern.heat;
+function heatTexture(pattern: TeamPattern, color: string, mirror: boolean): THREE.CanvasTexture {
+  const { nx, ny } = pattern.heat;
+  const values = mirror ? [...pattern.heat.values].reverse() : pattern.heat.values;
   const small = document.createElement("canvas");
   small.width = nx;
   small.height = ny;
@@ -127,6 +137,11 @@ function ordered(roles: PatternRole[]): PatternRole[] {
   return [...roles].sort((a, b) => a.line - b.line || a.y - b.y);
 }
 
+/** Gira 180° no campo: quem atacava para a direita passa a atacar para a esquerda. */
+function mirrored(role: PatternRole): PatternRole {
+  return { ...role, x: LENGTH - role.x, y: WIDTH - role.y };
+}
+
 interface SceneState {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
@@ -137,7 +152,7 @@ interface SceneState {
   targets: THREE.Vector3[];
   zoneScales: THREE.Vector2[];
   lines: THREE.Group;
-  heat: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  heats: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[];
 }
 
 function placeCamera(state: SceneState, mode: CameraMode, width: number, height: number): void {
@@ -157,7 +172,7 @@ function placeCamera(state: SceneState, mode: CameraMode, width: number, height:
 }
 
 /** Campo 3D com o padrão de um time: posições médias, linhas da formação e mapa de calor. */
-export function PatternField3D({ pattern, color, mode, showHeat }: Props) {
+export function PatternField3D({ layers, mode, showHeat }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<SceneState | null>(null);
   const modeRef = useRef(mode);
@@ -191,14 +206,17 @@ export function PatternField3D({ pattern, color, mode, showHeat }: Props) {
     scene.add(field);
     scene.add(goal(0), goal(1));
 
-    const heat = new THREE.Mesh(
-      new THREE.PlaneGeometry(LENGTH, WIDTH),
-      new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }),
-    );
-    heat.rotation.x = -Math.PI / 2;
-    heat.position.y = 0.02;
-    heat.visible = false;
-    scene.add(heat);
+    const heats = Array.from({ length: MAX_LAYERS }, (_, i) => {
+      const heat = new THREE.Mesh(
+        new THREE.PlaneGeometry(LENGTH, WIDTH),
+        new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }),
+      );
+      heat.rotation.x = -Math.PI / 2;
+      heat.position.y = 0.02 + i * 0.005;
+      heat.visible = false;
+      scene.add(heat);
+      return heat;
+    });
 
     const lines = new THREE.Group();
     scene.add(lines);
@@ -213,11 +231,11 @@ export function PatternField3D({ pattern, color, mode, showHeat }: Props) {
       targets: [],
       zoneScales: [],
       lines,
-      heat,
+      heats,
     };
     const bodyGeometry = new THREE.CylinderGeometry(1.15, 1.15, 2.0, 24);
     const zoneGeometry = new THREE.CircleGeometry(1, 40);
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < ROLES * MAX_LAYERS; i++) {
       const body = new THREE.Mesh(bodyGeometry, new THREE.MeshStandardMaterial({ roughness: 0.55 }));
       body.visible = false;
       const zone = new THREE.Mesh(
@@ -286,60 +304,69 @@ export function PatternField3D({ pattern, color, mode, showHeat }: Props) {
   useEffect(() => {
     const state = stateRef.current;
     if (!state) return;
-    const roles = pattern ? ordered(pattern.roles) : [];
     const first = state.bodies.every((b) => !b.visible);
 
-    state.bodies.forEach((body, i) => {
-      const role = roles[i];
-      const zone = state.zones[i];
-      if (!role) {
-        body.visible = false;
-        zone.visible = false;
-        return;
-      }
-      state.targets[i].copy(toScene(role.x, role.y, 1.0));
-      // Mancha = onde esse jogador costuma ficar (1 desvio padrão em cada direção, no mínimo 2 m).
-      state.zoneScales[i].set(Math.max(2, role.sx), Math.max(2, role.sy));
-      if (first) {
-        body.position.copy(state.targets[i]);
-        zone.scale.set(state.zoneScales[i].x, state.zoneScales[i].y, 1);
-      }
-      body.material.color.set(color);
-      zone.material.color.set(color);
-      body.visible = true;
-      zone.visible = true;
-    });
-
-    // Linhas da formação: liga as posições de cada linha, da esquerda para a direita.
     for (const child of [...state.lines.children]) {
       state.lines.remove(child);
       (child as THREE.Line).geometry.dispose();
     }
-    if (pattern) {
-      const byLine = new Map<number, PatternRole[]>();
-      for (const r of roles) byLine.set(r.line, [...(byLine.get(r.line) ?? []), r]);
-      for (const group of byLine.values()) {
-        if (group.length < 2) continue;
-        const pts = group.sort((a, b) => a.y - b.y).map((r) => toScene(r.x, r.y, 0.06));
-        state.lines.add(
-          new THREE.Line(
-            new THREE.BufferGeometry().setFromPoints(pts),
-            new THREE.LineBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.75 }),
-          ),
-        );
+
+    for (let layerIndex = 0; layerIndex < MAX_LAYERS; layerIndex++) {
+      const layer = layers[layerIndex];
+      const pattern = layer?.pattern ?? null;
+      const roles = pattern ? ordered(pattern.roles).map((r) => (layer.mirror ? mirrored(r) : r)) : [];
+
+      for (let k = 0; k < ROLES; k++) {
+        const i = layerIndex * ROLES + k;
+        const body = state.bodies[i];
+        const zone = state.zones[i];
+        const role = roles[k];
+        if (!role || !layer) {
+          body.visible = false;
+          zone.visible = false;
+          continue;
+        }
+        state.targets[i].copy(toScene(role.x, role.y, 1.0));
+        // Mancha = onde esse jogador costuma ficar (1 desvio padrão em cada direção, no mínimo 2 m).
+        state.zoneScales[i].set(Math.max(2, role.sx), Math.max(2, role.sy));
+        if (first || !body.visible) {
+          body.position.copy(state.targets[i]);
+          zone.scale.set(state.zoneScales[i].x, state.zoneScales[i].y, 1);
+        }
+        body.material.color.set(layer.color);
+        zone.material.color.set(layer.color);
+        body.visible = true;
+        zone.visible = true;
+      }
+
+      // Linhas da formação: liga as posições de cada linha, de um lado ao outro.
+      if (pattern && layer) {
+        const byLine = new Map<number, PatternRole[]>();
+        for (const r of roles) byLine.set(r.line, [...(byLine.get(r.line) ?? []), r]);
+        for (const group of byLine.values()) {
+          if (group.length < 2) continue;
+          const pts = group.sort((a, b) => a.y - b.y).map((r) => toScene(r.x, r.y, 0.06));
+          state.lines.add(
+            new THREE.Line(
+              new THREE.BufferGeometry().setFromPoints(pts),
+              new THREE.LineBasicMaterial({ color: layers.length > 1 ? layer.color : "#ffffff", transparent: true, opacity: 0.85 }),
+            ),
+          );
+        }
+      }
+
+      const heat = state.heats[layerIndex];
+      heat.material.map?.dispose();
+      if (pattern && layer && showHeat) {
+        heat.material.map = heatTexture(pattern, layer.color, layer.mirror);
+        heat.material.needsUpdate = true;
+        heat.visible = true;
+      } else {
+        heat.material.map = null;
+        heat.visible = false;
       }
     }
-
-    state.heat.material.map?.dispose();
-    if (pattern && showHeat) {
-      state.heat.material.map = heatTexture(pattern, color);
-      state.heat.material.needsUpdate = true;
-      state.heat.visible = true;
-    } else {
-      state.heat.material.map = null;
-      state.heat.visible = false;
-    }
-  }, [pattern, color, showHeat]);
+  }, [layers, showHeat]);
 
   return <div ref={hostRef} className="map3d" />;
 }
