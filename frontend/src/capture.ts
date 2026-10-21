@@ -10,7 +10,7 @@
  *   próximo tique é pulado. Isso impede que uma fila acumule e o atraso cresça.
  */
 
-import { SAMPLE_W, VideoRegionFinder, shouldReplace, type Rect } from "./region";
+import { RegionTracker, SAMPLE_W, VideoRegionFinder, shouldReplace, type Rect } from "./region";
 
 export const MAX_WIDTH = 1280;
 export const MAX_HEIGHT = 720;
@@ -77,6 +77,7 @@ export class FrameSender {
   crop: Rect | null = null;
 
   private finder = new VideoRegionFinder();
+  private regions = new RegionTracker();
   private cropsById = new Map<number, Rect | null>();
   private sample: OffscreenCanvas | HTMLCanvasElement;
   private sampleCtx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
@@ -112,7 +113,10 @@ export class FrameSender {
   setAutoCrop(on: boolean): void {
     this.autoCrop = on;
     this.finder.reset();
-    if (!on) this.crop = null;
+    if (!on) {
+      this.crop = null;
+      this.regions.reset();
+    }
   }
 
   /** Recorte usado no frame enviado (para desenhar as caixas no lugar certo). */
@@ -135,7 +139,9 @@ export class FrameSender {
       gray[i] = (rgba[i * 4] * 77 + rgba[i * 4 + 1] * 150 + rgba[i * 4 + 2] * 29) >> 8;
     }
     const found = this.finder.addSample(gray, w, h);
-    if (found !== undefined && shouldReplace(this.crop, found)) this.crop = found;
+    if (found === undefined) return;
+    const merged = this.regions.add(found, performance.now());
+    if (shouldReplace(this.crop, merged)) this.crop = merged;
   }
 
   start(): void {

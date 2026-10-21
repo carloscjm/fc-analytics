@@ -140,3 +140,35 @@ export function shouldReplace(current: Rect | null, next: Rect | null): boolean 
   );
   return d > 0.03;
 }
+
+/**
+ * Junta os recortes achados nos últimos segundos.
+ *
+ * Com a câmera parada, só os jogadores mudam na imagem e um recorte isolado
+ * encolhe para a área onde eles estão, cortando o vídeo. Como a câmera percorre
+ * o campo o tempo todo, a união dos recortes recentes cobre o vídeo inteiro.
+ */
+export class RegionTracker {
+  private recent: { rect: Rect; t: number }[] = [];
+
+  constructor(private windowMs = 20000) {}
+
+  reset(): void {
+    this.recent = [];
+  }
+
+  /** Recebe um recorte achado agora (ou null quando a tela inteira mudou) e devolve o recorte a usar. */
+  add(rect: Rect | null, now: number): Rect | null {
+    if (rect) this.recent.push({ rect, t: now });
+    this.recent = this.recent.filter((r) => now - r.t <= this.windowMs);
+    if (!this.recent.length) return null;
+    let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+    for (const { rect: r } of this.recent) {
+      x0 = Math.min(x0, r.x);
+      y0 = Math.min(y0, r.y);
+      x1 = Math.max(x1, r.x + r.w);
+      y1 = Math.max(y1, r.y + r.h);
+    }
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
+}
