@@ -25,7 +25,7 @@ from .protocol import FrameFormatError, parse_frame
 
 FOOTBALL_MODEL = "football-player-detection.pt"
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 log = logging.getLogger("fc-analytics")
 
 

@@ -15,6 +15,7 @@ export interface FlowLayer {
 const PAD = 5;
 const LINES = pitchLines(16);
 const MIN_MOVE_M = 2;
+const ARROW_W = 2;
 
 type P = [number, number];
 
@@ -27,12 +28,18 @@ function sectorOf(line: number, last: number): keyof typeof SECTOR_COLORS {
   return line === last ? "ataque" : "meio";
 }
 
-/** Curva suave pelas três etapas (passa pelo ponto do meio). */
-function curve([a, b, c]: P[]): string {
+/** Curva suave pelas três etapas (passa pelo ponto do meio), terminando antes do jogador para a ponta da seta aparecer. */
+function curve([a, b, c]: P[], trim: number): string {
   // Ponto de controle que faz a quadrática passar por b no meio do caminho.
   const cx = 2 * b[0] - (a[0] + c[0]) / 2;
   const cy = 2 * b[1] - (a[1] + c[1]) / 2;
-  return `M${a[0].toFixed(1)},${a[1].toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${c[0].toFixed(1)},${c[1].toFixed(1)}`;
+  const dx = c[0] - cx;
+  const dy = c[1] - cy;
+  const len = Math.hypot(dx, dy) || 1;
+  const k = Math.min(trim, len * 0.5) / len;
+  const ex = c[0] - dx * k;
+  const ey = c[1] - dy * k;
+  return `M${a[0].toFixed(1)},${a[1].toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${ex.toFixed(1)},${ey.toFixed(1)}`;
 }
 
 function markerId(color: string): string {
@@ -62,47 +69,65 @@ function Shape({ roles, mirror, faded }: { roles: FlowRole[]; mirror: boolean; f
   );
 }
 
-function TeamPaths({ layer, startShape }: { layer: FlowLayer; startShape: boolean }) {
+interface Track {
+  pts: P[];
+  name: string;
+  estimated: boolean;
+}
+
+function tracks(layer: FlowLayer): Track[] {
   const stages = layer.flow!.stages;
-  const first = stages[0].roles;
   const last = stages[stages.length - 1].roles;
+  return last.map((role, j) => ({
+    pts: stages.map((s) => place(s.roles[j], layer.mirror)),
+    name: role.name,
+    estimated: stages.some((s) => s.roles[j].estimated),
+  }));
+}
+
+/** Setas grossas e translúcidas: do começo ao fim da fase, passando pelo meio. */
+function TeamArrows({ layer }: { layer: FlowLayer }) {
   return (
     <g>
-      {startShape && <Shape roles={first} mirror={layer.mirror} faded />}
-      <Shape roles={last} mirror={layer.mirror} faded={false} />
-      {first.map((_, j) => {
-        const pts = stages.map((s) => place(s.roles[j], layer.mirror));
-        const role = last[j];
-        const estimated = stages.some((s) => s.roles[j].estimated);
-        const moved = Math.hypot(pts[2][0] - pts[0][0], pts[2][1] - pts[0][1]) >= MIN_MOVE_M;
-        const d = curve(pts);
+      {tracks(layer).map((t, j) => {
+        const [a, , c] = t.pts;
+        if (Math.hypot(c[0] - a[0], c[1] - a[1]) < MIN_MOVE_M) return null;
         return (
-          <g key={j} opacity={estimated ? 0.5 : 1}>
-            {moved && (
-              <>
-                <path d={d} fill="none" stroke="rgba(0,0,0,0.55)" strokeWidth={1.3} strokeLinecap="round" />
-                <path
-                  d={d}
-                  fill="none"
-                  stroke={layer.color}
-                  strokeWidth={0.7}
-                  strokeLinecap="round"
-                  strokeDasharray={estimated ? "1.4 1" : undefined}
-                  markerEnd={`url(#${markerId(layer.color)})`}
-                />
-              </>
-            )}
-            <circle cx={pts[0][0]} cy={pts[0][1]} r={1.3} fill="none" stroke={layer.color} strokeWidth={0.45} />
-            <circle cx={pts[1][0]} cy={pts[1][1]} r={0.55} fill={layer.color} />
-            <circle cx={pts[2][0]} cy={pts[2][1]} r={1.9} fill={layer.color} stroke="#0b130d" strokeWidth={0.4} />
-            {role.name && (
-              <text x={pts[2][0]} y={pts[2][1] - 2.8} className="flow-label">
-                {role.name}
-              </text>
-            )}
+          <g key={j} opacity={t.estimated ? 0.22 : 0.5}>
+            <path
+              d={curve(t.pts, 2.9)}
+              fill="none"
+              stroke={layer.color}
+              strokeWidth={ARROW_W}
+              strokeLinecap="butt"
+              strokeDasharray={t.estimated ? "2.4 1.6" : undefined}
+              markerEnd={`url(#${markerId(layer.color)})`}
+            />
           </g>
         );
       })}
+    </g>
+  );
+}
+
+/** Onde cada posição começa (anel) e termina (jogador com o nome). */
+function TeamMarks({ layer, startShape }: { layer: FlowLayer; startShape: boolean }) {
+  const stages = layer.flow!.stages;
+  return (
+    <g>
+      {startShape && <Shape roles={stages[0].roles} mirror={layer.mirror} faded />}
+      <Shape roles={stages[stages.length - 1].roles} mirror={layer.mirror} faded={false} />
+      {tracks(layer).map((t, j) => (
+        <g key={j} opacity={t.estimated ? 0.45 : 1}>
+          <circle cx={t.pts[0][0]} cy={t.pts[0][1]} r={1.2} fill="none" stroke={layer.color} strokeWidth={0.4} opacity={0.6} />
+          <circle cx={t.pts[2][0]} cy={t.pts[2][1]} r={1.8} fill={layer.color} stroke="#0b130d" strokeWidth={0.4} />
+          {t.name && (
+            <text x={t.pts[2][0]} y={t.pts[2][1] - 2.7} className="flow-label">
+              {t.name}
+            </text>
+          )}
+        </g>
+      ))}
     </g>
   );
 }
@@ -114,12 +139,12 @@ function Plays({ plays }: { plays: PlaysInfo }) {
   const c = plays.counts;
   const crossL = plays.bySide.cruzamento.esquerda;
   const crossR = plays.bySide.cruzamento.direita;
-  const width = (n: number) => 0.35 + Math.min(1.1, n * 0.08);
+  const width = (n: number) => 1.2 + Math.min(1.6, n * 0.12);
   return (
-    <g className="flow-plays" opacity={0.8}>
+    <g className="flow-plays">
       {crossL > 0 && (
         <g>
-          <path d="M88,5 Q99,10 96,28" fill="none" stroke={BALL} strokeWidth={width(crossL)} markerEnd="url(#flow-head-ball)" />
+          <path opacity={0.5} d="M88,5 Q99,10 96,28" fill="none" stroke={BALL} strokeWidth={width(crossL)} markerEnd="url(#flow-head-ball)" />
           <text x={84} y={-1.6} className="flow-play-label">
             {crossL} cruz.
           </text>
@@ -127,7 +152,7 @@ function Plays({ plays }: { plays: PlaysInfo }) {
       )}
       {crossR > 0 && (
         <g>
-          <path d="M88,63 Q99,58 96,40" fill="none" stroke={BALL} strokeWidth={width(crossR)} markerEnd="url(#flow-head-ball)" />
+          <path opacity={0.5} d="M88,63 Q99,58 96,40" fill="none" stroke={BALL} strokeWidth={width(crossR)} markerEnd="url(#flow-head-ball)" />
           <text x={84} y={71.2} className="flow-play-label">
             {crossR} cruz.
           </text>
@@ -135,7 +160,7 @@ function Plays({ plays }: { plays: PlaysInfo }) {
       )}
       {c.entrada > 0 && (
         <g>
-          <path d="M80,31 L91,31" fill="none" stroke={BALL} strokeWidth={width(c.entrada)} markerEnd="url(#flow-head-ball)" />
+          <path opacity={0.5} d="M80,31 L91,31" fill="none" stroke={BALL} strokeWidth={width(c.entrada)} markerEnd="url(#flow-head-ball)" />
           <text x={79} y={29.4} className="flow-play-label">
             {c.entrada} entradas
           </text>
@@ -144,6 +169,7 @@ function Plays({ plays }: { plays: PlaysInfo }) {
       {c.chute_fora > 0 && (
         <g>
           <path
+            opacity={0.5}
             d="M80,38 L103,35"
             fill="none"
             stroke={BALL}
@@ -179,15 +205,15 @@ export function FlowPitch({ layers }: { layers: FlowLayer[] }) {
             viewBox="0 0 10 10"
             refX="8"
             refY="5"
-            markerWidth="3.2"
-            markerHeight="3.2"
-            orient="auto-start-reverse"
+            markerWidth="2.2"
+            markerHeight="2.2"
+            orient="auto"
           >
-            <path d="M0,1 L9,5 L0,9 z" fill={color} stroke="#0b130d" strokeWidth={0.8} />
+            <path d="M0,0 L10,5 L0,10 z" fill={color} />
           </marker>
         ))}
-        <marker id="flow-head-ball" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="3" markerHeight="3" orient="auto">
-          <path d="M0,1 L9,5 L0,9 z" fill={BALL} />
+        <marker id="flow-head-ball" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="2.2" markerHeight="2.2" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill={BALL} />
         </marker>
       </defs>
       <rect x={-PAD} y={-PAD} width={LENGTH + 2 * PAD} height={WIDTH + 2 * PAD} fill="#0f1a12" />
@@ -204,7 +230,10 @@ export function FlowPitch({ layers }: { layers: FlowLayer[] }) {
       ))}
       {shown.map((layer, i) => (!layer.mirror && layer.plays ? <Plays key={`p${i}`} plays={layer.plays} /> : null))}
       {shown.map((layer, i) => (
-        <TeamPaths key={i} layer={layer} startShape={shown.length === 1} />
+        <TeamArrows key={`a${i}`} layer={layer} />
+      ))}
+      {shown.map((layer, i) => (
+        <TeamMarks key={`m${i}`} layer={layer} startShape={shown.length === 1} />
       ))}
     </svg>
   );
