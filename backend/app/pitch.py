@@ -211,7 +211,7 @@ MAX_REPROJECTION = 0.015  # erro médio aceito, em fração da largura da imagem
 RANSAC_THRESHOLD_M = 1.5
 MIN_SPREAD_M = 8.0
 SMOOTHING = 0.5
-KEEP_LAST_SECONDS = 0.6
+KEEP_LAST_SECONDS = 1.5
 CLOSE_UP_HEIGHT_RATIO = 0.25
 
 # Pontos de controle na imagem (fração da largura/altura) usados para suavizar a homografia.
@@ -224,27 +224,43 @@ def apply_h(h: np.ndarray, points: np.ndarray) -> np.ndarray:
     return cv2.perspectiveTransform(points.reshape(-1, 1, 2).astype(np.float32), h).reshape(-1, 2)
 
 
+# Último motivo de recusa da homografia (aparece no diagnóstico /debug/state).
+LAST_FIT: dict[str, object] = {}
+
+
 def fit_homography(image_xy: np.ndarray, pitch_xy: np.ndarray) -> tuple[np.ndarray | None, int]:
     """Homografia imagem → campo com RANSAC. Retorna (H, inliers)."""
+    LAST_FIT.clear()
+    LAST_FIT["points"] = int(len(image_xy))
     if len(image_xy) < MIN_POINTS:
+        LAST_FIT["reason"] = "poucos pontos"
         return None, 0
     # Pontos alinhados numa reta só (por exemplo, só a linha lateral) não definem o plano.
     spread = np.linalg.svd(pitch_xy - pitch_xy.mean(axis=0), compute_uv=False)
     if spread[-1] < MIN_SPREAD_M / 4 or spread[0] < MIN_SPREAD_M:
+        LAST_FIT["reason"] = "pontos alinhados"
         return None, 0
     h, mask = cv2.findHomography(image_xy, pitch_xy, cv2.RANSAC, RANSAC_THRESHOLD_M)
     if h is None or mask is None:
+        LAST_FIT["reason"] = "ransac falhou"
         return None, 0
     inliers = int(mask.sum())
-    if inliers < MIN_INLIERS:
+    LAST_FIT["inliers"] = inliers
+    if inliers < MIN_INLIERS or inliers < 0.5 * len(image_xy):
+        # Menos da metade dos pontos concorda: o modelo provavelmente trocou pontos (lado esquerdo e direito, por exemplo).
+        LAST_FIT["reason"] = "poucos pontos concordantes"
         return None, inliers
     # Os pontos do campo, levados de volta para a imagem, precisam cair perto de onde o modelo os viu.
     keep = mask.ravel().astype(bool)
     back = apply_h(np.linalg.inv(h), pitch_xy[keep])
     error = float(np.mean(np.linalg.norm(back - image_xy[keep], axis=1)))
     width = float(np.ptp(image_xy[:, 0])) or 1.0
+    LAST_FIT["errorPx"] = round(error, 1)
+    LAST_FIT["limitPx"] = round(MAX_REPROJECTION * max(width, 640.0), 1)
     if error > MAX_REPROJECTION * max(width, 640.0):
+        LAST_FIT["reason"] = "erro de reprojeção alto"
         return None, inliers
+    LAST_FIT["reason"] = "ok"
     return h, inliers
 
 
@@ -273,11 +289,19 @@ def orient(h: np.ndarray, width: int, height: int) -> np.ndarray:
 
 
 def plausible(h: np.ndarray, width: int, height: int) -> bool:
-    """A metade de baixo da imagem precisa cair perto do campo."""
+    """A metade de baixo da imagem precisa ficar à frente da câmera e perto do campo.
+
+    O centro tem que cair no campo (com folga); os cantos podem cair bem fora
+    (atrás do gol, na arquibancada), mas não absurdamente longe.
+    """
     xy = _probe(h, width, height)
     if xy is None:
         return False
-    inside = (xy[:, 0] > -25) & (xy[:, 0] < LENGTH + 25) & (xy[:, 1] > -25) & (xy[:, 1] < WIDTH + 25)
+    center = xy[4]
+    if not (-15 < center[0] < LENGTH + 15 and -15 < center[1] < WIDTH + 15):
+        return False
+    corners = xy[:4]
+    inside = (corners[:, 0] > -60) & (corners[:, 0] < LENGTH + 60) & (corners[:, 1] > -60) & (corners[:, 1] < WIDTH + 60)
     return bool(inside.all())
 
 
@@ -311,7 +335,15 @@ class HomographyTracker:
     def _fit(self, keypoints: Keypoints | None, width: int, height: int) -> FieldView | None:
         if keypoints is None:
             return None
-        good = (keypoints.conf >= KEYPOINT_MIN_CONF) & (keypoints.xy[:, 0] > 1) & (keypoints.xy[:, 1] > 1)
+        # Pontos colados na borda costumam ser chutes do modelo para fora da imagem.
+        mx, my = 0.01 * width, 0.01 * height
+        good = (
+            (keypoints.conf >= KEYPOINT_MIN_CONF)
+            & (keypoints.xy[:, 0] > mx)
+            & (keypoints.xy[:, 1] > my)
+            & (keypoints.xy[:, 0] < width - mx)
+            & (keypoints.xy[:, 1] < height - my)
+        )
         if good.sum() < MIN_POINTS:
             return None
         h, inliers = fit_homography(keypoints.xy[good], KEYPOINTS_M[good])
@@ -319,6 +351,9 @@ class HomographyTracker:
             return None
         h = orient(h, width, height)
         if not plausible(h, width, height):
+            LAST_FIT["reason"] = "fora do campo"
+            probe = _probe(h, width, height)
+            LAST_FIT["probe"] = None if probe is None else [[round(float(v), 1) for v in pt] for pt in probe]
             return None
 
         # Suavização: média móvel das posições, no campo, de pontos fixos da imagem.

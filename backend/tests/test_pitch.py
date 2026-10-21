@@ -85,7 +85,7 @@ def test_last_view_is_kept_briefly_then_dropped():
     empty = Keypoints(np.zeros((32, 2), np.float32), np.zeros(32, np.float32), 0)
     kept = tracker.update(empty, W, H, ts=0.3)
     assert kept is not None and not kept.fresh
-    assert tracker.update(empty, W, H, ts=1.5) is None
+    assert tracker.update(empty, W, H, ts=2.5) is None
 
 
 def test_visible_area_covers_the_middle_of_the_pitch():

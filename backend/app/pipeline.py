@@ -24,7 +24,7 @@ import numpy as np
 
 from .ball import BallTracker
 from .fieldmap import FieldMap
-from .pitch import CutDetector, HomographyTracker, Keypoints, is_close_up, visible_area
+from .pitch import LAST_FIT, CutDetector, HomographyTracker, Keypoints, is_close_up, visible_area
 from .teams import OUTLIER, TeamClassifier, jersey_feature
 
 PERSON_LABELS = {"pessoa", "jogador", "goleiro", "árbitro"}
@@ -222,6 +222,14 @@ class Pipeline:
         field = {
             **self.map.snapshot(ts),
             "keypoints": int((keypoints.conf >= 0.5).sum()) if keypoints is not None else 0,
+            "fit": dict(LAST_FIT),
+            "kp": [
+                [round(float(x), 1), round(float(y), 1), i + 1]
+                for i, ((x, y), c) in enumerate(zip(keypoints.xy, keypoints.conf))
+                if c >= 0.5
+            ]
+            if keypoints is not None
+            else [],
             "cut": cut,
             "view": visible_area(view.h, width, height) if view is not None else None,
             "hInv": [round(float(v), 6) for v in view.h_inv.reshape(-1)] if view is not None else None,

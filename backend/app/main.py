@@ -206,6 +206,8 @@ def debug_state() -> dict:
         "pitchMs": message.get("pitchMs"),
         "scene": (message.get("map") or {}).get("scene"),
         "keypoints": (message.get("map") or {}).get("keypoints"),
+        "fit": (message.get("map") or {}).get("fit"),
+        "frameSize": [message.get("width"), message.get("height")],
         "mapPlayers": len((message.get("map") or {}).get("players") or []),
         "pitch": pitch_status(),
         "roles": roles,
@@ -257,6 +259,9 @@ def debug_snapshot() -> Response:
                 continue
             xy = (pts[ok_pts, :2] / pts[ok_pts, 2:3]).round().astype(np.int32)
             cv2.polylines(canvas, [xy], False, (255, 0, 255), 1, cv2.LINE_AA)
+    for x, y, idx in field.get("kp") or []:
+        cv2.circle(canvas, (int(x), int(y)), 4, (0, 255, 255), -1, cv2.LINE_AA)
+        cv2.putText(canvas, str(idx), (int(x) + 5, int(y) - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1, cv2.LINE_AA)
     cv2.putText(canvas, f"cena: {field.get('scene')}  pontos: {field.get('keypoints')}", (10, 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1, cv2.LINE_AA)
     ok, buf = cv2.imencode(".jpg", canvas, [cv2.IMWRITE_JPEG_QUALITY, 85])

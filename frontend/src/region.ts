@@ -121,7 +121,8 @@ export class VideoRegionFinder {
  */
 export function snapTo16x9(rect: Rect, frameAspect: number): Rect {
   const aspect = (rect.w * frameAspect) / rect.h; // largura/altura em pixels
-  if (aspect <= 16 / 9 * 1.04) return rect;
+  // Só completa quando a área ficou claramente baixa demais; algumas transmissões são um pouco mais largas que 16:9.
+  if (aspect <= (16 / 9) * 1.2) return rect;
   const h = Math.min(1, (rect.w * frameAspect) / (16 / 9));
   const cy = rect.y + rect.h / 2;
   const y = Math.min(Math.max(0, cy - h / 2), 1 - h);
