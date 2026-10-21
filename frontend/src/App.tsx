@@ -296,6 +296,13 @@ export default function App() {
           if (!senderRef.current) return;
           senderRef.current.ack(msg.frameId);
         }
+        if (msg.stopCapture) {
+          if (mine) {
+            stopRef.current();
+            setNotice(msg.error ?? "Outra aba começou a capturar.");
+          }
+          return;
+        }
         if (msg.error) {
           if (mine) setNotice(`Erro na detecção: ${msg.error}`);
           return;
@@ -334,6 +341,9 @@ export default function App() {
     setResult(null);
     setCapturing(false);
   }, [video]);
+
+  const stopRef = useRef(stopCapture);
+  stopRef.current = stopCapture;
 
   const startCapture = useCallback(async () => {
     if (!video) return;

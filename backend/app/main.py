@@ -25,7 +25,7 @@ from .protocol import FrameFormatError, parse_frame
 
 FOOTBALL_MODEL = "football-player-detection.pt"
 
-VERSION = "0.7.1"
+VERSION = "0.7.2"
 log = logging.getLogger("fc-analytics")
 
 
@@ -95,6 +95,8 @@ async def lifespan(app: FastAPI):
     # frames reais da captura, e mudanças de modelo aparecem em todas as abas.
     app.state.recent_frames = deque(maxlen=20)
     app.state.clients = set()
+    # Só uma aba captura por vez: frames de duas abas misturados zeram o tracking a cada frame.
+    app.state.capturer = None
     # Último frame analisado, para a página de diagnóstico (/debug).
     app.state.last_frame = None
     app.state.result_times = deque(maxlen=60)
@@ -425,6 +427,8 @@ async def ws_endpoint(websocket: WebSocket) -> None:
         await _serve(websocket, detector, recent_frames)
     finally:
         websocket.app.state.clients.discard(websocket)
+        if getattr(websocket.app.state, "capturer", None) == conn:
+            websocket.app.state.capturer = None
 
 
 async def _serve(websocket: WebSocket, detector: DetectorLike, recent_frames: deque[np.ndarray]) -> None:
@@ -453,11 +457,26 @@ async def handle_frame(
     websocket: WebSocket, detector: DetectorLike, raw: bytes, recent_frames: deque[np.ndarray]
 ) -> None:
     received = time.perf_counter()
+    conn = websocket.scope.get("fca_conn")
+    state = websocket.app.state
+    if getattr(state, "capturer", None) is None:
+        state.capturer = conn
     try:
         packet = parse_frame(raw)
         image = await asyncio.to_thread(decode, packet.jpeg)
     except (FrameFormatError, ValueError) as exc:
         await send(websocket, {"type": "error", "detail": f"frame inválido: {exc}"})
+        return
+    if state.capturer != conn:
+        # Outra aba começou a capturar depois desta: esta para (a página mostra o aviso).
+        await send(websocket, {
+            "type": "detections",
+            "frameId": packet.frame_id,
+            "captureTs": packet.capture_ts,
+            "conn": conn,
+            "stopCapture": True,
+            "error": "Outra aba do FC Analytics começou a capturar o jogo; a captura desta aba parou.",
+        })
         return
     decode_ms = (time.perf_counter() - received) * 1000
     recent_frames.append(image)
@@ -555,7 +574,8 @@ async def handle_command(
         await broadcast(websocket.app, status_message(detector))
 
     elif kind == "reset_session":
-        # A página começou uma captura nova: tracking, times e bola recomeçam.
+        # A página começou uma captura nova: ela passa a ser a única que captura, e tracking, times e bola recomeçam.
+        websocket.app.state.capturer = websocket.scope.get("fca_conn")
         if websocket.app.state.pipeline is not None:
             websocket.app.state.pipeline.reset()
 

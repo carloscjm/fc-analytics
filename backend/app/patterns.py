@@ -407,6 +407,16 @@ class PatternStore:
             if not hasattr(self, "overrides"):
                 self.overrides: dict[tuple[int, str], tuple[int, ...]] = {}
 
+    def restart_clock(self) -> None:
+        """A página recomeçou o horário dos frames: esquece o que dependia dele, mantém o acumulado."""
+        with self._lock:
+            self.last_ts = None
+            self.possession = None
+            self.possession_ts = None
+            self.candidate = None
+            self.candidate_frames = 0
+            self.side.last_ts = None
+
     # ---------- um frame ----------
 
     def set_override(self, team: int, phase: str, sizes: tuple[int, ...] | None) -> None:

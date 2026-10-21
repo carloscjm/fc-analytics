@@ -111,6 +111,8 @@ class Pipeline:
         self.reset()
 
     def reset(self) -> None:
+        if hasattr(self, "patterns"):
+            self.patterns.restart_clock()  # captura nova: o horário dos frames recomeça
         self.tracker = make_tracker()
         self.id_offset = 0
         self.max_id = -1
@@ -325,15 +327,20 @@ class Pipeline:
     # ---------- padrões dos times (calculados em segundo plano a cada 10 s) ----------
 
     def _maybe_summarize(self, ts: float) -> None:
-        if self.patterns_busy or ts < self.patterns_next_ts:
+        # Relógio do servidor: o horário dos frames vem da página e recomeça quando ela é recarregada
+        # (com o horário da página, o resumo ficava parado até a página nova alcançar a antiga).
+        now = time.monotonic()
+        if self.patterns_busy or now < self.patterns_next_ts:
             return
-        self.patterns_next_ts = ts + 10.0
+        self.patterns_next_ts = now + 10.0
         self.patterns_busy = True
 
         def work() -> None:
             try:
                 self.patterns_latest = self.patterns.summary()
                 self.patterns_version += 1
+            except Exception:  # noqa: BLE001
+                log.exception("falha ao calcular os padrões")
             finally:
                 self.patterns_busy = False
 

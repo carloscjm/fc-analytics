@@ -296,6 +296,8 @@ export interface DetectionsMessage {
   patterns?: PatternsInfo | null;
   stats?: MatchStats | null;
   error?: string;
+  /** outra aba começou a capturar: esta deve parar */
+  stopCapture?: boolean;
 }
 
 export interface StatusMessage {

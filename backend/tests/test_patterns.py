@@ -198,3 +198,12 @@ def test_store_counts_the_back_line_and_respects_overrides():
     tactics = summary["tactics"]["0"]
     assert tactics["positions"][0].startswith("Defende com 3 atrás")
     assert set(tactics) == {"positions", "buildUp", "plays", "changes"}
+
+
+def test_restart_clock_forgets_old_possession_but_keeps_samples():
+    store = PatternStore()
+    store.possession, store.possession_ts, store.last_ts = 0, 5000.0, 5000.0
+    store.samples[(0, "ataque")].frames.append(np.zeros((6, 2), np.float32))
+    store.restart_clock()
+    assert store.possession is None and store.possession_ts is None and store.last_ts is None
+    assert len(store.samples[(0, "ataque")].frames) == 1
