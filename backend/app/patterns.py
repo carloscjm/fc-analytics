@@ -470,7 +470,12 @@ def transition(defense: dict[str, Any] | None, attack: dict[str, Any] | None) ->
 def highlights(moves: list[dict[str, Any]], shift: float, attack: dict[str, Any]) -> list[str]:
     """Frases curtas sobre os movimentos mais claros (laterais, volantes, pontas)."""
     out: list[str] = []
-    out.append(f"O time inteiro avança em média {shift:.0f} m quando passa da defesa para o ataque.")
+    if shift >= 3:
+        out.append(f"O time inteiro avança em média {shift:.0f} m quando passa da defesa para o ataque.")
+    elif shift <= -3:
+        out.append(f"O time fica em média {-shift:.0f} m mais recuado quando ataca do que quando defende (contra-ataque ou dados ainda poucos).")
+    else:
+        out.append("O time fica praticamente na mesma altura quando ataca e quando defende.")
     for m in sorted(moves, key=lambda m: -abs(m["dx"] - shift)):
         name, rel = m["name"], m["dx"] - shift
         if name in SIDE_NAMES:
