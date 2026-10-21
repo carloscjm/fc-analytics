@@ -23,8 +23,34 @@ export interface TeamsInfo {
   recalibrations?: number;
 }
 
+export interface MapPlayer {
+  id: number | null;
+  /** metros: x de 0 a 105 (comprimento), y de 0 a 68 (largura, 0 = lateral do alto da imagem) */
+  x: number;
+  y: number;
+  t: number | null;
+  l: string;
+  /** fantasma: fora da imagem, na última posição conhecida */
+  g: boolean;
+  age: number;
+}
+
+export interface MapInfo {
+  scene: "ao vivo" | "close" | "sem campo" | "sem modelo do campo" | "procurando";
+  pausedS: number;
+  players: MapPlayer[];
+  ball: { x: number; y: number; e: boolean } | null;
+  trail: [number, number][];
+  view: [number, number][] | null;
+  /** homografia campo → imagem (3x3, por linha) */
+  hInv: number[] | null;
+  keypoints: number;
+  cut: boolean;
+}
+
 export interface TrackingInfo {
   active: number;
+  cutsLastMinute?: number;
   newLastMinute: number;
   avgLifeS: number | null;
 }
@@ -39,11 +65,14 @@ export interface DetectionsMessage {
   inferMs?: number;
   serverMs?: number;
   trackMs?: number;
+  pitchMs?: number | null;
+  conn?: number;
   model?: string;
   imgsz?: number;
   boxes?: WireBox[];
   teams?: TeamsInfo;
   tracking?: TrackingInfo;
+  map?: MapInfo | null;
   error?: string;
 }
 
@@ -57,6 +86,7 @@ export interface StatusMessage {
   imgszOptions: number[];
   device: string;
   footballModel: boolean;
+  pitch?: { state: "ausente" | "carregando" | "baixando" | "pronto" | "erro" | "indisponível"; error: string | null };
 }
 
 export interface BenchmarkRow {
@@ -78,7 +108,7 @@ export interface BenchmarkMessage {
 }
 
 export type ServerMessage =
-  | { type: "hello"; version: string; serverTs: number }
+  | { type: "hello"; version: string; serverTs: number; conn?: number }
   | { type: "pong"; clientTs: number; serverTs: number }
   | { type: "error"; detail: string }
   | DetectionsMessage
@@ -94,6 +124,8 @@ type Listener<T> = (value: T) => void;
 export class BackendClient {
   status: ConnStatus = "conectando";
   pingMs: number | null = null;
+  /** identificador desta aba no backend (os resultados vão para todas as abas) */
+  conn: number | null = null;
 
   private ws: WebSocket | null = null;
   private messageListeners = new Set<Listener<ServerMessage>>();
@@ -165,6 +197,7 @@ export class BackendClient {
       if (this.ws !== ws || typeof event.data !== "string") return;
       const msg = JSON.parse(event.data) as ServerMessage;
       if (msg.type === "pong") this.pingMs = Math.round(performance.now() - msg.clientTs);
+      if (msg.type === "hello") this.conn = msg.conn ?? null;
       this.messageListeners.forEach((l) => l(msg));
     };
 

@@ -2,7 +2,7 @@
 
 Analisador de futebol ao vivo que roda 100% no seu PC. Ele captura a aba do navegador com o jogo, detecta jogadores e bola, projeta tudo num mapa 3D visto de cima e gera estatísticas e insights em tempo real, sem nenhum serviço pago.
 
-**Status:** Fase 2 (tracking e times). Cada jogador ganha um ID estável, os times são separados pela cor do uniforme, árbitro e goleiros ficam à parte e a bola é estimada quando some por pouco tempo.
+**Status:** Fase 3 (campo e mapa 3D). Os jogadores rastreados e a bola aparecem num mapa 3D do campo, em metros, atualizado ao vivo; closes, replays e cortes de câmera pausam o mapa.
 
 ## Estrutura
 
@@ -50,6 +50,17 @@ Hardware de referência: RTX 4060 8 GB (cenário A do planejamento).
 - **Bola:** entre várias candidatas, fica a mais próxima de onde a bola deveria estar. Se ela some por até 0,6 s, a posição é estimada pela última velocidade e aparece tracejada como "bola?".
 - **Na página:** caixas na cor real de cada time com o ID, painel de calibração dos times (com botão "Recalibrar times") e métricas de estabilidade dos IDs.
 
+## Como a Fase 3 funciona
+
+- **Pontos do campo:** o modelo `football-pitch-detection.pt` (YOLOv8 pose do [roboflow/sports](https://github.com/roboflow/sports), AGPL-3.0) acha até 32 pontos do campo: cantos, áreas, meio-campo, círculo central e marcas do pênalti. Ele é baixado sozinho na primeira vez que o backend sobe (cerca de 140 MB), do mesmo Google Drive indicado no `setup.sh` daquele projeto.
+- **Pixel para metros:** com 4 ou mais pontos confiáveis (e que não estejam todos numa reta), uma homografia com RANSAC leva o pé de cada jogador para metros num campo oficial de 105 × 68 m. A homografia é suavizada entre frames.
+- **Closes, replays e cortes:** um corte de câmera é detectado pela mudança brusca de cores entre frames; nele o tracking recomeça, para não juntar jogadores de tomadas diferentes. Closes (alguém muito grande na tela) e frames sem pontos suficientes pausam o mapa, que fica na última posição conhecida.
+- **Mapa 3D:** feito em Three.js. Gramado com as linhas oficiais, jogadores nas cores dos times (goleiro com anel roxo, árbitro em laranja), bola com rastro dos últimos 3 s e a área que a câmera da TV está mostrando. Os bonecos andam suavemente entre as atualizações. Dá para alternar entre vista de cima e vista 3D, girar e aproximar.
+- **Fora da imagem:** a câmera da TV não mostra o campo inteiro. Quem sai da imagem continua no mapa esmaecido, na última posição conhecida, por até 5 s.
+- **Linhas do campo sobre o vídeo:** com a opção ligada, as linhas projetadas aparecem em rosa sobre o vídeo. Se elas coincidem com as linhas reais do gramado, o mapa está certo.
+- **Só o mapa:** o link "Abrir só o mapa" abre o mapa numa janela própria, que recebe os dados da aba que está capturando.
+- **Diagnóstico:** `localhost:8000/debug/state`, `/debug/snapshot.jpg` (último frame com caixas e linhas do campo) e `/debug/map.png` (mapa em 2D).
+
 ## Modelo de futebol (opcional)
 
 No painel, **Baixar modelo de futebol** baixa o `football-player-detection.pt` (YOLOv8x, cerca de 130 MB) do Google Drive indicado no `examples/soccer/setup.sh` do projeto [roboflow/sports](https://github.com/roboflow/sports). Ele detecta `player`, `goalkeeper`, `referee` e `ball`. É gratuito e segue a licença AGPL-3.0 da Ultralytics.
@@ -84,7 +95,8 @@ Componentes e licenças conferidos em 20/10/2026:
 | OpenCV 4.5+ | Apache 2.0 |
 | scikit-learn | BSD-3-Clause |
 | FastAPI | MIT |
-| React, Vite, Three.js, react-three-fiber | MIT |
+| React, Vite, Three.js | MIT |
+| Modelo de pontos do campo (roboflow/sports, YOLOv8 pose) | AGPL-3.0 |
 | Apache ECharts | Apache 2.0 |
 | Ollama | MIT |
 | Qwen3 (pesos) | Apache 2.0 |

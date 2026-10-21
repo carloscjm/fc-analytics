@@ -1,10 +1,12 @@
-"""Fase 2: transforma as detecções de cada frame em jogadores rastreados.
+"""Fases 2 e 3: transforma as detecções de cada frame em jogadores no mapa.
 
 Para cada frame:
-1. as pessoas vão para o BoT-SORT (ByteTrack com compensação do movimento da
+1. detecta cortes de câmera (o tracking recomeça neles) e closes;
+2. as pessoas vão para o BoT-SORT (ByteTrack com compensação do movimento da
    câmera), que mantém um ID por jogador;
-2. a cor do uniforme de cada ID alimenta o classificador de times;
-3. a bola é escolhida entre as candidatas e estimada quando some por pouco tempo.
+3. a cor do uniforme de cada ID alimenta o classificador de times;
+4. a bola é escolhida entre as candidatas e estimada quando some por pouco tempo;
+5. com os pontos-chave do campo, a homografia leva todos para metros no mapa.
 
 Uma "sessão" é uma captura: quando a página começa a capturar de novo, ou o
 relógio do navegador volta para trás (página recarregada), tudo recomeça.
@@ -21,6 +23,8 @@ from typing import Any
 import numpy as np
 
 from .ball import BallTracker
+from .fieldmap import FieldMap
+from .pitch import CutDetector, HomographyTracker, Keypoints, is_close_up, visible_area
 from .teams import OUTLIER, TeamClassifier, jersey_feature
 
 PERSON_LABELS = {"pessoa", "jogador", "goleiro", "árbitro"}
@@ -75,8 +79,14 @@ class Pipeline:
 
     def reset(self) -> None:
         self.tracker = make_tracker()
+        self.id_offset = 0
+        self.max_id = -1
         self.teams = TeamClassifier()
         self.ball = BallTracker()
+        self.cuts = CutDetector()
+        self.homography = HomographyTracker()
+        self.map = FieldMap()
+        self.cut_times: deque[float] = deque(maxlen=500)
         self.lives: dict[int, TrackLife] = {}
         self.ended_lifetimes: list[float] = []
         self.track_starts: deque[float] = deque(maxlen=2000)
@@ -84,18 +94,34 @@ class Pipeline:
 
     # ---------- processamento ----------
 
-    def process(self, image: np.ndarray, boxes: list[Any], ts: float) -> dict[str, Any]:
+    def process(
+        self, image: np.ndarray, boxes: list[Any], ts: float, keypoints: Keypoints | None = None
+    ) -> dict[str, Any]:
         with self._lock:
             if self.last_ts is not None and ts <= self.last_ts:
                 self.reset()
             self.last_ts = ts
             start = time.perf_counter()
-            out = self._process(image, boxes, ts)
+            out = self._process(image, boxes, ts, keypoints)
             out["trackMs"] = round((time.perf_counter() - start) * 1000, 1)
             return out
 
-    def _process(self, image: np.ndarray, boxes: list[Any], ts: float) -> dict[str, Any]:
+    def _on_cut(self, ts: float) -> None:
+        """Corte de câmera: os IDs da tomada anterior não valem mais."""
+        self.tracker = make_tracker()
+        self.id_offset = self.max_id + 1
+        self.ball.reset()
+        self.homography.reset()
+        self.map.forget_ids()
+        self.cut_times.append(ts)
+
+    def _process(self, image: np.ndarray, boxes: list[Any], ts: float, keypoints: Keypoints | None) -> dict[str, Any]:
         import supervision as sv
+
+        height, width = image.shape[:2]
+        cut = self.cuts.update(image)
+        if cut:
+            self._on_cut(ts)
 
         people = [b for b in boxes if b.label in PERSON_LABELS]
         balls = [b for b in boxes if b.label == "bola"]
@@ -117,7 +143,9 @@ class Pipeline:
         if tracked is not None:
             for xyxy, conf, cls, tid in zip(tracked.xyxy, tracked.confidence, tracked.class_id, tracked.tracker_id):
                 box = tuple(int(v) for v in np.round(xyxy))
-                frame_items.append((int(tid), box, float(conf), labels_seen[int(cls)]))
+                gid = int(tid) + self.id_offset if tid >= 0 else -1
+                self.max_id = max(self.max_id, gid)
+                frame_items.append((gid, box, float(conf), labels_seen[int(cls)]))
 
         # Times: só os jogadores entram no classificador (o goleiro e o árbitro
         # do modelo de futebol já vêm separados pelo próprio detector).
@@ -177,6 +205,28 @@ class Pipeline:
                 {"b": list(ball.box), "c": round(ball.conf, 3), "l": "bola", "id": None, "t": None, "e": ball.estimated}
             )
 
+        # Campo: closes e frames sem pontos-chave suficientes pausam o mapa.
+        close = is_close_up(people, height)
+        view = None if close else self.homography.update(keypoints, width, height, ts)
+        if close:
+            self.homography.reset()
+        if view is not None:
+            scene = "ao vivo"
+        elif close:
+            scene = "close"
+        elif keypoints is None:
+            scene = "sem modelo do campo"
+        else:
+            scene = "sem campo"
+        self.map.update(view.h if view is not None else None, tracked_boxes, ts, scene)
+        field = {
+            **self.map.snapshot(ts),
+            "keypoints": int((keypoints.conf >= 0.5).sum()) if keypoints is not None else 0,
+            "cut": cut,
+            "view": visible_area(view.h, width, height) if view is not None else None,
+            "hInv": [round(float(v), 6) for v in view.h_inv.reshape(-1)] if view is not None else None,
+        }
+
         self._expire(ts)
         counts = {
             "0": sum(1 for b in tracked_boxes if b["t"] == 0),
@@ -184,6 +234,7 @@ class Pipeline:
         }
         return {
             "boxes": tracked_boxes,
+            "map": field,
             "wide": wide,
             "teams": {**self.teams.info(), "counts": counts},
             "tracking": self._stats(ts, active=sum(1 for b in tracked_boxes if b["id"] is not None)),
@@ -203,6 +254,7 @@ class Pipeline:
         lifetimes = self.ended_lifetimes[-100:] + [ts - life.first_ts for life in self.lives.values()]
         return {
             "active": active,
+            "cutsLastMinute": sum(1 for c in self.cut_times if ts - c <= 60),
             "newLastMinute": recent_new,
             "avgLifeS": round(float(np.mean(lifetimes)), 1) if lifetimes else None,
         }

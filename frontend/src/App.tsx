@@ -8,6 +8,7 @@ import {
 } from "./backend";
 import { chooseTab, FrameSender, type SenderCounters } from "./capture";
 import { DetectionOverlay, ROLE_COLORS, teamColors } from "./DetectionOverlay";
+import { FieldMap3D, type CameraMode } from "./FieldMap3D";
 import { RollingStats, type LiveStats } from "./stats";
 
 const INTERVALS = [100, 125, 150, 175, 200];
@@ -36,6 +37,11 @@ export default function App() {
   const [pingMs, setPingMs] = useState<number | null>(null);
   const [benchmark, setBenchmark] = useState<BenchmarkMessage | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [cameraMode, setCameraMode] = useState<CameraMode>("top");
+  const [showIds, setShowIds] = useState(true);
+  const [showView, setShowView] = useState(true);
+  const [showPitch, setShowPitch] = useState(true);
+  const mapOnly = useMemo(() => new URLSearchParams(location.search).has("mapa"), []);
 
   useEffect(() => {
     const offStatus = client.onStatus(setConn);
@@ -44,15 +50,21 @@ export default function App() {
       if (msg.type === "benchmark") setBenchmark(msg);
       if (msg.type === "error") setNotice(msg.detail);
       if (msg.type === "detections") {
-        // Resultado que chega depois de parar a captura é descartado.
-        if (!senderRef.current) return;
-        senderRef.current.ack(msg.frameId);
+        const mine = msg.conn === undefined || msg.conn === client.conn;
+        if (mine) {
+          // Resultado que chega depois de parar a captura é descartado.
+          if (!senderRef.current) return;
+          senderRef.current.ack(msg.frameId);
+        }
         if (msg.error) {
-          setNotice(`Erro na detecção: ${msg.error}`);
+          if (mine) setNotice(`Erro na detecção: ${msg.error}`);
           return;
         }
-        const now = performance.now();
-        statsRef.current.add(now, now - msg.captureTs, msg.inferMs, msg.serverMs);
+        if (mine) {
+          const now = performance.now();
+          statsRef.current.add(now, now - msg.captureTs, msg.inferMs, msg.serverMs);
+        }
+        // Resultados de outra aba (captura numa janela, mapa em outra) também atualizam o mapa.
         setResult(msg);
       }
     });
@@ -129,13 +141,98 @@ export default function App() {
 
   const ready = conn === "conectado" && server?.state === "pronto";
   const busyText = server?.detail ?? null;
+  const field = result?.map ?? null;
+  const pitchState = server?.pitch?.state;
+
+  let sceneText = "Aguardando a captura";
+  let sceneKind: "live" | "paused" | "idle" = "idle";
+  if (pitchState === "baixando") sceneText = "Baixando o modelo do campo (cerca de 140 MB, só na primeira vez)...";
+  else if (pitchState === "carregando") sceneText = "Carregando o modelo do campo...";
+  else if (pitchState === "erro")
+    sceneText = `Modelo do campo indisponível (${server?.pitch?.error ?? "erro"}). Feche e abra o app para tentar de novo.`;
+  else if (field?.scene === "ao vivo") {
+    sceneText = "Ao vivo";
+    sceneKind = "live";
+  } else if (field?.scene === "close") {
+    sceneText = "Pausado · close ou replay";
+    sceneKind = "paused";
+  } else if (field?.scene === "sem campo") {
+    sceneText = "Pausado · campo não identificado na imagem";
+    sceneKind = "paused";
+  }
+
+  const mapCard = (
+    <section className={`card map-card ${mapOnly ? "full" : ""}`}>
+      <div className="map-head">
+        <h2>Mapa do campo</h2>
+        <div className="map-controls">
+          <div className="seg">
+            <button className={cameraMode === "top" ? "on" : ""} onClick={() => setCameraMode("top")}>
+              Vista de cima
+            </button>
+            <button className={cameraMode === "3d" ? "on" : ""} onClick={() => setCameraMode("3d")}>
+              Vista 3D
+            </button>
+          </div>
+          <label className="check">
+            <input type="checkbox" checked={showIds} onChange={(e) => setShowIds(e.target.checked)} />
+            IDs
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={showView} onChange={(e) => setShowView(e.target.checked)} />
+            Área da câmera
+          </label>
+          {!mapOnly && (
+            <a className="link" href="?mapa" target="_blank" rel="noreferrer">
+              Abrir só o mapa
+            </a>
+          )}
+        </div>
+      </div>
+      <div className="map-wrap">
+        <FieldMap3D map={field} colors={colors} mode={cameraMode} showIds={showIds} showView={showView} />
+        <div className={`scene-badge ${sceneKind}`}>
+          <span className="dot" />
+          {sceneText}
+        </div>
+      </div>
+      <p className="muted small map-foot">
+        Arraste para girar, use a roda do mouse para aproximar. Jogadores esmaecidos estão fora da imagem da TV, na
+        última posição conhecida.
+        {field && (
+          <>
+            {" "}
+            Pontos do campo: {field.keypoints} · no mapa: {field.players.filter((p) => !p.g).length} visíveis,{" "}
+            {field.players.filter((p) => p.g).length} fora da imagem
+            {tracking?.cutsLastMinute !== undefined && <> · cortes no último minuto: {tracking.cutsLastMinute}</>}
+          </>
+        )}
+      </p>
+    </section>
+  );
+
+  if (mapOnly) {
+    return (
+      <div className="app map-only">
+        <header className="topbar">
+          <div>
+            <h1>FC Analytics · mapa</h1>
+            <p className="subtitle">
+              Conexão: <span className={`pill pill-${conn}`}>{conn}</span> · a captura acontece na outra aba
+            </p>
+          </div>
+        </header>
+        <main className="map-only-main">{mapCard}</main>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
       <header className="topbar">
         <div>
           <h1>FC Analytics</h1>
-          <p className="subtitle">Fase 2 · tracking e times</p>
+          <p className="subtitle">Fase 3 · mapa do campo</p>
         </div>
         <div className="controls">
           {capturing ? (
@@ -189,15 +286,21 @@ export default function App() {
             <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} />
             Rótulos
           </label>
+          <label className="check">
+            <input type="checkbox" checked={showPitch} onChange={(e) => setShowPitch(e.target.checked)} />
+            Linhas do campo
+          </label>
         </div>
       </header>
 
       {(notice || busyText) && <div className={`banner ${server?.state === "erro" ? "bad" : ""}`}>{notice ?? busyText}</div>}
 
       <main className="layout">
+        <div className="main-col">
+        {mapCard}
         <section className="stage">
           <video ref={setVideo} muted playsInline className="video" />
-          <DetectionOverlay video={video} result={result} showLabels={showLabels} />
+          <DetectionOverlay video={video} result={result} showLabels={showLabels} showPitch={showPitch} />
           {!capturing && (
             <div className="placeholder">
               <p>Clique em <strong>Escolher aba</strong> e selecione a aba com o jogo.</p>
@@ -211,6 +314,7 @@ export default function App() {
             </div>
           )}
         </section>
+        </div>
 
         <aside className="panel">
           <section className="card">
@@ -224,7 +328,9 @@ export default function App() {
               <dd>{fmt(stats.latencyP95Ms)}</dd>
               <dt>Inferência</dt>
               <dd>{fmt(stats.inferMs)}</dd>
-              <dt>Tracking e times</dt>
+              <dt>Campo (pontos-chave)</dt>
+              <dd>{fmt(result?.pitchMs)}</dd>
+              <dt>Tracking, times e mapa</dt>
               <dd>{fmt(result?.trackMs)}</dd>
               <dt>Tempo no backend</dt>
               <dd>{fmt(stats.serverMs)}</dd>
@@ -309,8 +415,8 @@ export default function App() {
               <dd>{tracking?.avgLifeS === null || tracking?.avgLifeS === undefined ? "—" : `${tracking.avgLifeS} s`}</dd>
             </dl>
             <p className="muted small">
-              IDs estáveis aparecem como vida média alta e poucos IDs novos por minuto. Cortes de câmera e replays
-              geram IDs novos; isso é tratado na Fase 3.
+              IDs estáveis aparecem como vida média alta e poucos IDs novos por minuto. A cada corte de câmera o
+              tracking recomeça, por isso os IDs mudam depois de replays e closes.
             </p>
           </section>
 

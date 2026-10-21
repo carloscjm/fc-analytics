@@ -350,3 +350,143 @@ dd.big {
   font-size: 13px;
   padding: 5px 12px;
 }
+
+.main-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.map-card {
+  padding: 12px 14px;
+}
+
+.map-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 10px;
+}
+
+.map-head h2 {
+  margin: 0;
+}
+
+.map-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.map-controls .check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.seg button {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border: none;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.seg button.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.map-wrap {
+  position: relative;
+  aspect-ratio: 117 / 80;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0f1a12;
+}
+
+.map-card.full .map-wrap {
+  aspect-ratio: auto;
+  height: calc(100vh - 190px);
+  min-height: 320px;
+}
+
+.map3d,
+.map3d canvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+.scene-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f4f6f2;
+  background: rgba(11, 13, 10, 0.72);
+}
+
+.scene-badge .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+
+.scene-badge.live .dot {
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
+}
+
+.scene-badge.paused .dot {
+  background: #f59e0b;
+}
+
+.map-foot {
+  margin: 8px 0 0;
+}
+
+.map-only-main {
+  padding: 16px 20px;
+}
+
+.map-controls .link {
+  text-decoration: none;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .stage {
+    min-height: 0;
+  }
+}
+
+.main-col .stage {
+  align-self: stretch;
+  width: 100%;
+}

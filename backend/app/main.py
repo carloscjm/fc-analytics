@@ -23,7 +23,7 @@ from .protocol import FrameFormatError, parse_frame
 
 FOOTBALL_MODEL = "football-player-detection.pt"
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 log = logging.getLogger("fc-analytics")
 
 
@@ -45,6 +45,13 @@ def create_detector() -> DetectorLike:
     from .detector import Detector
 
     return Detector()
+
+
+def create_pitch(detector: Any):
+    """Detector dos pontos-chave do campo (Fase 3), na mesma GPU do detector de jogadores."""
+    from .pitch import PitchDetector
+
+    return PitchDetector(models_dir=detector.models_dir, device=detector.device, half=detector.half)
 
 
 def create_pipeline():
@@ -74,7 +81,14 @@ async def lifespan(app: FastAPI):
             app.state.setup_warning = (
                 "Faltam bibliotecas do tracking. Feche as janelas do app, rode o instalar.bat de novo e depois o iniciar.bat."
             )
+    if not hasattr(app.state, "pitch"):
+        try:
+            app.state.pitch = create_pitch(app.state.detector)
+        except Exception:  # noqa: BLE001
+            log.exception("detector do campo indisponível")
+            app.state.pitch = None
     app.state.model_ready = asyncio.Event()
+    app.state.next_conn = 0
     # Compartilhados entre conexões: a medição disparada de qualquer aba usa os
     # frames reais da captura, e mudanças de modelo aparecem em todas as abas.
     app.state.recent_frames = deque(maxlen=20)
@@ -90,6 +104,15 @@ async def lifespan(app: FastAPI):
             log.exception("falha ao carregar o modelo padrão")
         finally:
             app.state.model_ready.set()
+        if app.state.pitch is not None:
+            # O modelo do campo é baixado na primeira vez (cerca de 140 MB); a detecção já funciona enquanto isso.
+            app.state.pitch.state = "carregando"
+            await broadcast(app, status_message(app.state.detector))
+            try:
+                await asyncio.to_thread(app.state.pitch.ensure)
+            except Exception:  # noqa: BLE001
+                log.exception("falha ao preparar o modelo do campo")
+            await broadcast(app, status_message(app.state.detector))
 
     task = asyncio.create_task(warm())
     yield
@@ -140,7 +163,15 @@ def status_message(detector: DetectorLike, state: str = "pronto", detail: str | 
         "imgszOptions": IMGSZ_OPTIONS,
         "device": detector.device_name,
         "footballModel": FOOTBALL_MODEL in detector.available_models(),
+        "pitch": pitch_status(),
     }
+
+
+def pitch_status() -> dict[str, Any]:
+    pitch = getattr(app.state, "pitch", None)
+    if pitch is None:
+        return {"state": "indisponível", "error": None}
+    return {"state": pitch.state, "error": pitch.error}
 
 
 @app.get("/health")
@@ -172,6 +203,11 @@ def debug_state() -> dict:
         "teams": message.get("teams"),
         "tracking": message.get("tracking"),
         "wide": message.get("wide"),
+        "pitchMs": message.get("pitchMs"),
+        "scene": (message.get("map") or {}).get("scene"),
+        "keypoints": (message.get("map") or {}).get("keypoints"),
+        "mapPlayers": len((message.get("map") or {}).get("players") or []),
+        "pitch": pitch_status(),
         "roles": roles,
         "ids": sorted(b["id"] for b in message["boxes"] if b.get("id") is not None),
     }
@@ -209,15 +245,82 @@ def debug_snapshot() -> Response:
         if tag:
             cv2.putText(canvas, tag, (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3)
             cv2.putText(canvas, tag, (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+    field = message.get("map") or {}
+    if field.get("hInv"):
+        from .pitch import pitch_lines
+
+        h_inv = np.array(field["hInv"], dtype=np.float64).reshape(3, 3)
+        for line in pitch_lines():
+            pts = np.hstack([line, np.ones((len(line), 1), np.float32)]) @ h_inv.T
+            ok_pts = pts[:, 2] > 0
+            if ok_pts.sum() < 2:
+                continue
+            xy = (pts[ok_pts, :2] / pts[ok_pts, 2:3]).round().astype(np.int32)
+            cv2.polylines(canvas, [xy], False, (255, 0, 255), 1, cv2.LINE_AA)
+    cv2.putText(canvas, f"cena: {field.get('scene')}  pontos: {field.get('keypoints')}", (10, 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1, cv2.LINE_AA)
     ok, buf = cv2.imencode(".jpg", canvas, [cv2.IMWRITE_JPEG_QUALITY, 85])
     return Response(content=buf.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/debug/map.png")
+def debug_map() -> Response:
+    """O mapa visto de cima desenhado em 2D (10 px por metro)."""
+    import cv2
+
+    from .pitch import LENGTH, WIDTH, pitch_lines
+
+    last = app.state.last_frame
+    scale, pad = 10, 30
+    canvas = np.full((int(WIDTH * scale) + 2 * pad, int(LENGTH * scale) + 2 * pad, 3), (40, 110, 45), np.uint8)
+
+    def px(x: float, y: float) -> tuple[int, int]:
+        return int(round(pad + x * scale)), int(round(pad + y * scale))
+
+    for line in pitch_lines():
+        cv2.polylines(canvas, [np.array([px(x, y) for x, y in line], np.int32)], False, (235, 235, 235), 2, cv2.LINE_AA)
+    if last is not None:
+        message = last[1]
+        field = message.get("map") or {}
+        teams = message.get("teams") or {}
+        colors = teams.get("colors") or ["#f5f5f5", "#3b82f6"]
+
+        def bgr(hex_color: str) -> tuple[int, int, int]:
+            n = int(hex_color[1:], 16)
+            return (n & 255, (n >> 8) & 255, (n >> 16) & 255)
+
+        if field.get("view"):
+            overlay = canvas.copy()
+            cv2.fillPoly(overlay, [np.array([px(x, y) for x, y in field["view"]], np.int32)], (255, 255, 255))
+            canvas = cv2.addWeighted(overlay, 0.15, canvas, 0.85, 0)
+        for player in field.get("players") or []:
+            if player["t"] in (0, 1):
+                color = bgr(colors[player["t"]])
+            else:
+                color = (11, 158, 245) if "árbitro" in player["l"] else (247, 85, 168)
+            center = px(player["x"], player["y"])
+            if player["g"]:
+                cv2.circle(canvas, center, 8, color, 1, cv2.LINE_AA)
+            else:
+                cv2.circle(canvas, center, 8, color, -1, cv2.LINE_AA)
+                cv2.circle(canvas, center, 8, (0, 0, 0), 1, cv2.LINE_AA)
+        trail = field.get("trail") or []
+        if len(trail) > 1:
+            cv2.polylines(canvas, [np.array([px(x, y) for x, y in trail], np.int32)], False, (21, 204, 250), 1, cv2.LINE_AA)
+        if field.get("ball"):
+            cv2.circle(canvas, px(field["ball"]["x"], field["ball"]["y"]), 5, (21, 204, 250), -1, cv2.LINE_AA)
+        cv2.putText(canvas, f"cena: {field.get('scene')}", (pad, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    ok, buf = cv2.imencode(".png", canvas)
+    return Response(content=buf.tobytes(), media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket) -> None:
     detector: DetectorLike = websocket.app.state.detector
     await websocket.accept()
-    await send(websocket, {"type": "hello", "version": VERSION, "serverTs": now_ms()})
+    conn = websocket.app.state.next_conn = websocket.app.state.next_conn + 1
+    websocket.scope["fca_conn"] = conn
+    await send(websocket, {"type": "hello", "version": VERSION, "serverTs": now_ms(), "conn": conn})
 
     ready: asyncio.Event = websocket.app.state.model_ready
     if not ready.is_set():
@@ -269,10 +372,19 @@ async def handle_frame(
     recent_frames.append(image)
 
     pipeline = websocket.app.state.pipeline
+    pitch = websocket.app.state.pitch
+
+    def analyse():
+        detected = detector.detect(image)
+        keypoints = pitch.detect(image) if pitch is not None and pitch.model is not None else None
+        return detected, keypoints
+
     try:
-        result = await asyncio.to_thread(detector.detect, image)
+        result, keypoints = await asyncio.to_thread(analyse)
         if pipeline is not None:
-            tracked = await asyncio.to_thread(pipeline.process, image, result.boxes, packet.capture_ts / 1000)
+            tracked = await asyncio.to_thread(
+                pipeline.process, image, result.boxes, packet.capture_ts / 1000, keypoints
+            )
         else:
             tracked = {"boxes": [b.to_json() for b in result.boxes], "teams": None, "tracking": None, "trackMs": None}
     except Exception as exc:  # noqa: BLE001
@@ -291,6 +403,8 @@ async def handle_frame(
             "height": result.height,
             "decodeMs": round(decode_ms, 1),
             "inferMs": round(result.infer_ms, 1),
+            "pitchMs": round(keypoints.infer_ms, 1) if keypoints is not None else None,
+            "conn": websocket.scope.get("fca_conn"),
             "serverMs": round((time.perf_counter() - received) * 1000, 1),
             "trackMs": tracked["trackMs"],
             "model": detector.model_name,
@@ -299,10 +413,12 @@ async def handle_frame(
             "teams": tracked["teams"],
             "tracking": tracked["tracking"],
             "wide": tracked.get("wide"),
+            "map": tracked.get("map"),
         }
     websocket.app.state.last_frame = (image, message, time.time())
     websocket.app.state.result_times.append(time.time())
-    await send(websocket, message)
+    # Todas as abas abertas recebem o resultado: dá para ver o mapa numa segunda janela.
+    await broadcast(websocket.app, message)
 
 
 async def handle_command(

@@ -1,5 +1,8 @@
 import { useEffect, useRef } from "react";
 import type { DetectionsMessage, WireBox } from "./backend";
+import { pitchLines, projectToImage } from "./pitch";
+
+const LINES = pitchLines(32);
 
 export const FALLBACK_TEAM_COLORS: [string, string] = ["#f5f5f5", "#3b82f6"];
 export const ROLE_COLORS: Record<string, string> = {
@@ -49,10 +52,11 @@ interface Props {
   video: HTMLVideoElement | null;
   result: DetectionsMessage | null;
   showLabels: boolean;
+  showPitch: boolean;
 }
 
 /** Desenha as caixas sobre o vídeo, respeitando o enquadramento (object-fit: contain). */
-export function DetectionOverlay({ video, result, showLabels }: Props) {
+export function DetectionOverlay({ video, result, showLabels, showPitch }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -82,6 +86,30 @@ export function DetectionOverlay({ video, result, showLabels }: Props) {
       const sx = shownW / result.width;
       const sy = shownH / result.height;
       const colors = teamColors(result);
+
+      // Linhas do campo projetadas pela homografia: conferem se o mapa está alinhado.
+      const hInv = result.map?.hInv;
+      if (showPitch && hInv) {
+        ctx.strokeStyle = "rgba(236, 72, 153, 0.85)";
+        ctx.lineWidth = 1.5;
+        for (const line of LINES) {
+          ctx.beginPath();
+          let drawing = false;
+          for (const [x, y] of line) {
+            const pt = projectToImage(hInv, x, y);
+            if (!pt) {
+              drawing = false;
+              continue;
+            }
+            const u = offX + pt[0] * sx;
+            const v = offY + pt[1] * sy;
+            if (drawing) ctx.lineTo(u, v);
+            else ctx.moveTo(u, v);
+            drawing = true;
+          }
+          ctx.stroke();
+        }
+      }
 
       ctx.font = "600 11px system-ui, sans-serif";
       for (const box of result.boxes) {
@@ -114,7 +142,7 @@ export function DetectionOverlay({ video, result, showLabels }: Props) {
     const observer = new ResizeObserver(draw);
     observer.observe(video);
     return () => observer.disconnect();
-  }, [video, result, showLabels]);
+  }, [video, result, showLabels, showPitch]);
 
   return <canvas ref={canvasRef} className="overlay" aria-hidden="true" />;
 }

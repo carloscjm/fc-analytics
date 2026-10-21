@@ -112,7 +112,9 @@ class Detector:
     # ---------- modelos ----------
 
     def available_models(self) -> list[str]:
-        local = sorted(p.name for p in self.models_dir.glob("*.pt") if p.name not in OFFICIAL_MODELS)
+        # O modelo de pontos-chave do campo (Fase 3) não é um detector de jogadores.
+        skip = set(OFFICIAL_MODELS) | {"football-pitch-detection.pt"}
+        local = sorted(p.name for p in self.models_dir.glob("*.pt") if p.name not in skip)
         return OFFICIAL_MODELS + local
 
     @property
