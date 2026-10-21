@@ -171,6 +171,7 @@ def debug_state() -> dict:
         "serverMs": message.get("serverMs"),
         "teams": message.get("teams"),
         "tracking": message.get("tracking"),
+        "wide": message.get("wide"),
         "roles": roles,
         "ids": sorted(b["id"] for b in message["boxes"] if b.get("id") is not None),
     }
@@ -297,6 +298,7 @@ async def handle_frame(
             "boxes": tracked["boxes"],
             "teams": tracked["teams"],
             "tracking": tracked["tracking"],
+            "wide": tracked.get("wide"),
         }
     websocket.app.state.last_frame = (image, message, time.time())
     websocket.app.state.result_times.append(time.time())

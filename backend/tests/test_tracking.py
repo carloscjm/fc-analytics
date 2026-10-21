@@ -47,12 +47,15 @@ def test_jersey_feature_ignores_grass():
     assert np.linalg.norm(f_tight - f_wide) < 5
 
 
+def frame_features(image, boxes, with_ids=True):
+    return [(tid if with_ids else None, jersey_feature(image, (b.x1, b.y1, b.x2, b.y2))) for tid, b in enumerate(boxes)]
+
+
 def test_team_classifier_splits_colors_and_flags_referee():
     clf = TeamClassifier()
     image, boxes = pitch_with_players(team_layout())
-    for step in range(4):
-        for tid, b in enumerate(boxes):
-            clf.observe(tid, jersey_feature(image, (b.x1, b.y1, b.x2, b.y2)), ts=step * 0.15)
+    for step in range(10):
+        clf.observe_frame(frame_features(image, boxes), ts=step * 0.15, wide=True)
     assert clf.ready
     reds = {clf.team_of(t) for t in range(0, 16, 2)}
     blues = {clf.team_of(t) for t in range(1, 16, 2)}
@@ -60,6 +63,37 @@ def test_team_classifier_splits_colors_and_flags_referee():
     assert OUTLIER not in reds | blues
     assert clf.team_of(16) == OUTLIER
     assert len(clf.info()["colors"]) == 2
+
+
+def test_calibration_ignores_close_ups():
+    clf = TeamClassifier()
+    # Close-up: poucos jogadores e gente de roupa preta (comissão técnica).
+    close, close_boxes = pitch_with_players([(100, 100, BLACK), (300, 100, BLACK), (500, 100, RED)])
+    for step in range(40):
+        clf.observe_frame(frame_features(close, close_boxes), ts=step * 0.15, wide=False)
+    assert not clf.ready
+    image, boxes = pitch_with_players(team_layout())
+    for step in range(10):
+        clf.observe_frame(frame_features(image, boxes), ts=6 + step * 0.15, wide=True)
+    assert clf.ready
+    assert clf.team_of(0) != clf.team_of(1)
+    assert OUTLIER not in {clf.team_of(0), clf.team_of(1)}
+
+
+def test_bad_calibration_is_redone():
+    clf = TeamClassifier()
+    # Calibra num cenário errado: preto contra vermelho.
+    wrong, wrong_boxes = pitch_with_players([(60 + i * 140, 120, BLACK if i % 2 else RED) for i in range(8)])
+    for step in range(12):
+        clf.observe_frame(frame_features(wrong, wrong_boxes), ts=step * 0.15, wide=True)
+    assert clf.ready
+    # No jogo de verdade os azuis não se encaixam: a calibração recomeça sozinha.
+    image, boxes = pitch_with_players(team_layout())
+    for step in range(40):
+        clf.observe_frame(frame_features(image, boxes), ts=2 + step * 0.15, wide=True)
+    assert clf.recalibrations >= 1
+    assert clf.ready
+    assert clf.team_of(0) != clf.team_of(1)
 
 
 def test_ball_is_estimated_briefly_then_dropped():
@@ -96,3 +130,23 @@ def test_pipeline_resets_when_clock_goes_back():
         pipe.process(image, boxes, ts=10 + step * 0.15)
     out = pipe.process(image, boxes, ts=1.0)  # página recarregada
     assert out["tracking"]["active"] == 0 or out["teams"]["state"] == "calibrando"
+
+
+def test_small_players_keep_ids_with_pan_and_jitter():
+    rng = np.random.default_rng(1)
+    pipe = Pipeline()
+    base = [(40 + (i % 10) * 120, 200 + (i // 10) * 220, RED if i % 2 else BLUE) for i in range(20)]
+    seen = []
+    for step in range(30):
+        image = np.full((720, 1280, 3), GRASS, dtype=np.uint8)
+        boxes = []
+        for i, (x, y, color) in enumerate(base):
+            x = int(x + step * 9 + rng.integers(-2, 3))  # jogador correndo + câmera acompanhando
+            y = int(y + rng.integers(-2, 3))
+            image[y : y + 30, x : x + 12] = color
+            boxes.append(Box(x, y, x + 12, y + 30, float(rng.uniform(0.3, 0.6)), "pessoa"))
+        out = pipe.process(image, boxes, ts=step * 0.15)
+        seen.append(out)
+    total_ids = len(pipe.lives) + len(pipe.ended_lifetimes)
+    assert total_ids <= 24  # 20 jogadores: quase nenhum ID novo depois de começar
+    assert seen[-1]["tracking"]["active"] >= 18

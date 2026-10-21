@@ -26,6 +26,9 @@ from .teams import OUTLIER, TeamClassifier, jersey_feature
 PERSON_LABELS = {"pessoa", "jogador", "goleiro", "árbitro"}
 TRACK_ENDED_AFTER_S = 3.0
 TRACK_FPS = 7.0
+# Tomada aberta: muitos jogadores pequenos na tela (closes e replays ficam de fora da calibração).
+WIDE_MIN_PEOPLE = 6
+WIDE_MAX_HEIGHT_RATIO = 0.18
 
 
 @dataclass
@@ -39,16 +42,30 @@ class TrackLife:
 
 
 def make_tracker():
-    from trackers import BoTSORTTracker
+    from trackers import BIoU, BoTSORTTracker
 
+    # Ajustado para jogadores pequenos na tela e cerca de 7 frames por segundo:
+    # limiares de confiança mais baixos (jogador distante tem confiança baixa),
+    # associação mais tolerante e caixas expandidas na comparação (BIoU).
     return BoTSORTTracker(
         lost_track_buffer=int(TRACK_FPS * 2),  # cerca de 2 s para um jogador escondido voltar com o mesmo ID
         frame_rate=TRACK_FPS,
-        track_activation_threshold=0.4,
-        high_conf_det_threshold=0.5,
+        track_activation_threshold=0.3,
+        high_conf_det_threshold=0.35,
         minimum_consecutive_frames=2,
+        minimum_iou_threshold_first_assoc=0.15,
+        minimum_iou_threshold_second_assoc=0.3,
+        minimum_iou_threshold_unconfirmed_assoc=0.2,
         enable_cmc=True,
+        iou=BIoU(buffer_ratio=0.3),
     )
+
+
+def is_wide_shot(people: list[Any], height: int) -> bool:
+    if len(people) < WIDE_MIN_PEOPLE:
+        return False
+    median_h = float(np.median([b.y2 - b.y1 for b in people]))
+    return median_h <= WIDE_MAX_HEIGHT_RATIO * height
 
 
 class Pipeline:
@@ -104,35 +121,44 @@ class Pipeline:
 
         # Times: só os jogadores entram no classificador (o goleiro e o árbitro
         # do modelo de futebol já vêm separados pelo próprio detector).
-        for tid, box, _, label in frame_items:
-            if tid < 0:
-                continue
-            life = self.lives.get(tid)
-            if life is None:
-                life = self.lives[tid] = TrackLife(first_ts=ts, last_ts=ts)
-                self.track_starts.append(ts)
-            life.last_ts = ts
-            life.labels[label] = life.labels.get(label, 0) + 1
+        wide = is_wide_shot(people, image.shape[0])
+        features: list[tuple[int | None, np.ndarray]] = []
+        direct_feature: dict[int, np.ndarray] = {}
+        for i, (tid, box, _, label) in enumerate(frame_items):
+            if tid >= 0:
+                life = self.lives.get(tid)
+                if life is None:
+                    life = self.lives[tid] = TrackLife(first_ts=ts, last_ts=ts)
+                    self.track_starts.append(ts)
+                life.last_ts = ts
+                life.labels[label] = life.labels.get(label, 0) + 1
             if label in ("pessoa", "jogador"):
                 feature = jersey_feature(image, box)
                 if feature is not None:
-                    self.teams.observe(tid, feature, ts)
+                    features.append((tid if tid >= 0 else None, feature))
+                    direct_feature[i] = feature
+        self.teams.observe_frame(features, ts, wide)
 
         team_positions: dict[int, list[float]] = {0: [], 1: []}
         resolved: list[tuple[int, tuple[int, int, int, int], float, str, int | None]] = []
-        for tid, box, conf, label in frame_items:
+        for i, (tid, box, conf, label) in enumerate(frame_items):
             role, team = label, None
-            if tid >= 0:
-                main = self.lives[tid].main_label()
-                if main in ("pessoa", "jogador"):
+            main = self.lives[tid].main_label() if tid >= 0 else label
+            if main in ("pessoa", "jogador"):
+                if tid >= 0:
                     team_vote = self.teams.team_of(tid)
-                    if team_vote == OUTLIER:
-                        role = "árbitro/goleiro"
-                    elif team_vote is not None:
-                        role, team = "jogador", team_vote
-                        team_positions[team].append((box[0] + box[2]) / 2)
+                elif self.teams.model is not None and i in direct_feature:
+                    # Ainda sem ID confirmado: classifica só por este frame.
+                    team_vote = self.teams.model.classify(direct_feature[i])
                 else:
-                    role = main
+                    team_vote = None
+                if team_vote == OUTLIER:
+                    role = "árbitro/goleiro"
+                elif team_vote is not None:
+                    role, team = "jogador", team_vote
+                    team_positions[team].append((box[0] + box[2]) / 2)
+            else:
+                role = main
             resolved.append((tid, box, conf, role, team))
 
         for tid, box, conf, role, team in resolved:
@@ -158,6 +184,7 @@ class Pipeline:
         }
         return {
             "boxes": tracked_boxes,
+            "wide": wide,
             "teams": {**self.teams.info(), "counts": counts},
             "tracking": self._stats(ts, active=sum(1 for b in tracked_boxes if b["id"] is not None)),
         }
@@ -182,4 +209,5 @@ class Pipeline:
 
     def recalibrate_teams(self) -> None:
         with self._lock:
+            self.teams.recalibrations += 1
             self.teams.reset()
