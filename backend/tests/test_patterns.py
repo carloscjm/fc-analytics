@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from app.patterns import PatternStore, compute_pattern, normalize, split_lines
+from app.patterns import FORMATIONS, PatternStore, compute_pattern, normalize, split_lines
 
 # Posições médias (time atacando para a direita, metros).
 F442 = [(25, 10), (22, 26), (22, 42), (25, 58), (45, 10), (42, 28), (42, 40), (45, 58), (65, 28), (65, 40)]
@@ -33,6 +33,14 @@ def test_split_lines_four_lines_and_football_limits():
     # Duas posições bem recuadas não viram uma "defesa de 2": a defesa tem de 3 a 5.
     odd = np.array([20, 21, 27, 28, 28, 40, 41, 42, 60, 61], dtype=np.float32)
     assert 3 <= len(split_lines(odd)[0]) <= 5
+
+
+def test_split_lines_always_gives_a_known_formation():
+    # Posições confusas (espalhadas por igual) ainda dão uma formação que existe.
+    rng = np.random.default_rng(11)
+    for _ in range(50):
+        xs = rng.uniform(15, 85, 10).astype(np.float32)
+        assert tuple(len(g) for g in split_lines(xs)) in FORMATIONS
 
 
 def test_compute_pattern_recovers_formations():

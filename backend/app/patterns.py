@@ -44,7 +44,6 @@ MIN_FRAMES_FOR_PATTERN = 40
 ROLES = 10
 SIDE_HALF_LIFE_S = 120.0
 HEAT_CELL_M = 5.0
-LINE_GAP_SPLIT_M = 5.0
 
 OUTFIELD_ROLES = {"jogador", "pessoa"}
 
@@ -81,36 +80,51 @@ def normalize(points: np.ndarray, defends_left: bool) -> np.ndarray:
     return np.column_stack([LENGTH - points[:, 0], WIDTH - points[:, 1]])
 
 
+# Formações que existem no futebol (de trás para a frente) e quanto cada uma é rara.
+# Um custo maior pede que as posições se encaixem bem melhor para ela ganhar.
+FORMATIONS: dict[tuple[int, ...], float] = {
+    (4, 4, 2): 0.0,
+    (4, 3, 3): 0.0,
+    (4, 2, 3, 1): 0.1,
+    (4, 5, 1): 0.25,
+    (3, 5, 2): 0.25,
+    (5, 3, 2): 0.25,
+    (4, 1, 4, 1): 0.35,
+    (3, 4, 3): 0.35,
+    (5, 4, 1): 0.35,
+    (4, 4, 1, 1): 0.4,
+    (4, 3, 2, 1): 0.45,
+    (3, 4, 2, 1): 0.5,
+    (3, 4, 1, 2): 0.5,
+    (4, 2, 2, 2): 0.6,
+    (4, 1, 3, 2): 0.6,
+}
+FORMATION_PRIOR_WEIGHT = 0.12
+
+
 def split_lines(xs: np.ndarray) -> list[list[int]]:
-    """Divide as 10 posições (pela profundidade) em 3 ou 4 linhas, de trás para a frente.
+    """Divide as 10 posições em linhas, de trás para a frente, numa formação conhecida.
 
-    Testa todas as divisões possíveis e fica com a de linhas mais "retas" (menor
-    variação de profundidade dentro de cada linha), respeitando o que existe no
-    futebol: defesa com 3 a 5 jogadores e ataque com 1 a 3. Uma quarta linha só
-    entra se separar bem melhor do que três.
+    Para cada formação da lista, as posições (ordenadas pela profundidade) são
+    cortadas nos tamanhos dela. O custo é a variação de profundidade dentro das
+    linhas, em relação à variação total, mais o quanto a formação é rara. Assim
+    posições médias confusas (a câmera não mostra o campo todo) caem numa formação
+    comum em vez de nomes que não existem, como 3-3-2-2.
     """
-    from itertools import combinations
-
     order = np.argsort(xs)
     sorted_x = xs[order]
     n = len(sorted_x)
-    best: tuple[float, list[list[int]]] | None = None
-    for k in (3, 4):
-        for cuts in combinations(range(1, n), k - 1):
-            bounds = (0, *cuts, n)
-            sizes = [bounds[i + 1] - bounds[i] for i in range(k)]
-            if not (3 <= sizes[0] <= 5 and 1 <= sizes[-1] <= 3):
-                continue
-            cost = sum(float(np.var(sorted_x[bounds[i] : bounds[i + 1]])) * sizes[i] for i in range(k))
-            if k == 4:
-                cost += LINE_GAP_SPLIT_M**2 * 1.5
-            if best is None or cost < best[0]:
-                groups = [list(order[bounds[i] : bounds[i + 1]]) for i in range(k)]
-                best = (cost, groups)
-    if best is None:
+    total = float(np.var(sorted_x)) * n
+    if n != 10 or total <= 1e-6:
         return [list(order)]
+    best: tuple[float, list[list[int]]] | None = None
+    for sizes, prior in FORMATIONS.items():
+        bounds = np.cumsum((0, *sizes))
+        within = sum(float(np.var(sorted_x[bounds[i] : bounds[i + 1]])) * sizes[i] for i in range(len(sizes)))
+        cost = within / total + FORMATION_PRIOR_WEIGHT * prior
+        if best is None or cost < best[0]:
+            best = (cost, [list(order[bounds[i] : bounds[i + 1]]) for i in range(len(sizes))])
     return best[1]
-
 
 def describe_block(line_height: float) -> str:
     if line_height < 30:
