@@ -23,7 +23,7 @@ iniciar.bat               abre backend, frontend e o navegador (Windows)
 
 Onde fica cada coisa: o programa em `%LocalAppData%\FCAnalytics` (trocado a cada atualização); o ambiente Python, os modelos baixados, as configurações e o registro em `%LocalAppData%\FCAnalytics\runtime`; as partidas na pasta escolhida.
 
-Para publicar uma versão nova: `git tag v0.6.1 && git push origin v0.6.1`. A automação `.github/workflows/release.yml` (Windows, no GitHub) monta a página, o app de controle (.NET 8 + [Velopack](https://github.com/velopack/velopack), MIT) e o instalador, e publica nos Releases.
+Para publicar uma versão nova: mude o número no arquivo `VERSION` (por exemplo `0.6.1`) e envie para a `main` (uma tag `v0.6.1` também funciona). A automação `.github/workflows/release.yml` (Windows, no GitHub) monta a página, o app de controle (.NET 8 + [Velopack](https://github.com/velopack/velopack), MIT) e o instalador, e publica nos Releases.
 
 ## Desenvolvimento (sem o app)
 

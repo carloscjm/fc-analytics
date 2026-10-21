@@ -1,10 +1,13 @@
-# Monta o app do Windows e publica nos Releases do GitHub quando uma tag "v*" é enviada.
+# Monta o app do Windows e publica nos Releases do GitHub quando o arquivo VERSION muda na main
+# (ou quando uma tag "v*" é enviada).
 # O app de controle (.NET 8 + Velopack) leva junto o código do backend, a página já montada e o uv,
 # que instala o Python e as bibliotecas na máquina de quem usa.
 name: Release
 
 on:
   push:
+    branches: [main]
+    paths: [VERSION]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -34,8 +37,8 @@ jobs:
         shell: pwsh
         run: |
           $ref = "${{ github.ref_name }}"
-          if ($ref -notmatch '^v\d') { $ref = "v0.0.${{ github.run_number }}" }
-          "version=$($ref.TrimStart('v'))" >> $env:GITHUB_OUTPUT
+          if ($ref -match '^v\d') { $v = $ref.TrimStart('v') } else { $v = (Get-Content VERSION -Raw).Trim() }
+          "version=$v" >> $env:GITHUB_OUTPUT
 
       - name: Página do painel
         working-directory: frontend
