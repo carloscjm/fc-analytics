@@ -14,6 +14,19 @@ instalar.bat              instala as dependências do projeto (Windows)
 iniciar.bat               abre backend, frontend e o navegador (Windows)
 ```
 
+## Instalação no Windows (app)
+
+1. Baixe o `FCAnalytics-win-Setup.exe` da página de [Releases](https://github.com/carloscjm/fc-analytics/releases/latest) e dê dois cliques.
+2. Na primeira vez, o app pede a **pasta das partidas** (onde o banco com as partidas analisadas fica gravado) e clica em **Instalar**: ele baixa o Python 3.12, o PyTorch (com CUDA quando há placa NVIDIA) e as bibliotecas da análise, com o [uv](https://github.com/astral-sh/uv). Se encontrar a instalação antiga em `E:\fc-analytics`, traz os modelos e as partidas de lá.
+3. Depois disso, abrir o app sobe a análise sozinho e abre o painel no Chrome. Os botões **Iniciar**, **Parar**, **Abrir painel**, **Buscar atualizações** e **Alterar...** (pasta das partidas) ficam na janela do app.
+4. **Buscar atualizações** baixa a versão nova dos Releases, instala as bibliotecas novas (se a lista mudou) e reabre o app.
+
+Onde fica cada coisa: o programa em `%LocalAppData%\FCAnalytics` (trocado a cada atualização); o ambiente Python, os modelos baixados, as configurações e o registro em `%LocalAppData%\FCAnalytics\runtime`; as partidas na pasta escolhida.
+
+Para publicar uma versão nova: `git tag v0.6.1 && git push origin v0.6.1`. A automação `.github/workflows/release.yml` (Windows, no GitHub) monta a página, o app de controle (.NET 8 + [Velopack](https://github.com/velopack/velopack), MIT) e o instalador, e publica nos Releases.
+
+## Desenvolvimento (sem o app)
+
 ## Pré-requisitos (Windows)
 
 | Item | Versão | Para quê |
@@ -171,6 +184,9 @@ Componentes e licenças conferidos em 20/10/2026:
 | ONNX Runtime | MIT |
 | SciPy | BSD-3-Clause |
 | Ollama | MIT |
+| .NET 8 | MIT |
+| Velopack | MIT |
+| uv | MIT ou Apache 2.0 |
 | Qwen3 (pesos) | Apache 2.0 |
 
 Uso pessoal está liberado em todos. Se o projeto for distribuído ou virar produto usando Ultralytics YOLO, o código inteiro precisa ser publicado sob AGPL-3.0; a alternativa é trocar a detecção para RF-DETR.

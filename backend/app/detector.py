@@ -23,7 +23,9 @@ from typing import Any
 import cv2
 import numpy as np
 
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+# Pasta dos modelos: o app de controle do Windows aponta para fora da pasta do programa (FCA_MODELS_DIR),
+# para os modelos baixados não sumirem nas atualizações.
+MODELS_DIR = Path(os.environ["FCA_MODELS_DIR"]) if os.environ.get("FCA_MODELS_DIR") else Path(__file__).resolve().parent.parent / "models"
 OFFICIAL_MODELS = ["yolo26n.pt", "yolo26s.pt", "yolo26m.pt", "yolo26l.pt", "yolo26x.pt"]
 DEFAULT_MODEL = os.environ.get("FCA_MODEL", "yolo26s.pt")
 # Modelo YOLOv8x treinado em futebol pelo projeto roboflow/sports (licença AGPL-3.0,

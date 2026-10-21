@@ -23,3 +23,9 @@ Thumbs.db
 .idea/
 .env
 *.tsbuildinfo
+
+# App do Windows
+launcher/bin/
+launcher/obj/
+publish/
+Releases/

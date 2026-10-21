@@ -240,3 +240,17 @@ def test_set_formation_command(client):
     conn.send_json({"type": "set_formation", "team": 0, "phase": "defesa", "formation": None})
     assert conn.receive_json()["options"]["0-defesa"]["override"] is None
     ws.__exit__(None, None, None)
+
+
+def test_serves_the_built_page(tmp_path, monkeypatch):
+    from fastapi.staticfiles import StaticFiles
+
+    (tmp_path / "index.html").write_text("<!doctype html><title>FC Analytics</title>", encoding="utf-8")
+    monkeypatch.setenv("FCA_WEB_DIR", str(tmp_path))
+    import app.main as main
+
+    assert main._web_dir() == tmp_path
+    test_app = main.FastAPI()
+    test_app.mount("/", StaticFiles(directory=str(tmp_path), html=True))
+    with TestClient(test_app) as c:
+        assert "FC Analytics" in c.get("/").text

@@ -14,6 +14,7 @@ import os
 import time
 from collections import deque
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
@@ -683,3 +684,25 @@ async def handle_command(
 
     else:
         await send(websocket, {"type": "error", "detail": f"tipo desconhecido: {kind!r}"})
+
+
+
+# ---------------------------------------------------------------------------
+# Página do painel: servida pelo próprio backend quando ela já foi montada
+# (no app do Windows, a pasta vem em FCA_WEB_DIR; no desenvolvimento, frontend/dist).
+# Fica por último para /ws, /health e /debug terem prioridade.
+# ---------------------------------------------------------------------------
+
+
+def _web_dir() -> Path | None:
+    env = os.environ.get("FCA_WEB_DIR")
+    candidates = [Path(env)] if env else []
+    candidates.append(Path(__file__).resolve().parent.parent.parent / "frontend" / "dist")
+    return next((c for c in candidates if (c / "index.html").is_file()), None)
+
+
+WEB_DIR = _web_dir()
+if WEB_DIR is not None:
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")

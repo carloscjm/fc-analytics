@@ -1,0 +1,74 @@
+# Monta o app do Windows e publica nos Releases do GitHub quando uma tag "v*" é enviada.
+# O app de controle (.NET 8 + Velopack) leva junto o código do backend, a página já montada e o uv,
+# que instala o Python e as bibliotecas na máquina de quem usa.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UV_VERSION: "0.12.21"
+  VPK_VERSION: "1.2.158"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Versão
+        id: version
+        shell: pwsh
+        run: |
+          $ref = "${{ github.ref_name }}"
+          if ($ref -notmatch '^v\d') { $ref = "v0.0.${{ github.run_number }}" }
+          "version=$($ref.TrimStart('v'))" >> $env:GITHUB_OUTPUT
+
+      - name: Página do painel
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: App de controle
+        run: dotnet publish launcher/FCAnalytics.csproj -c Release -r win-x64 --self-contained -o publish -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Juntar backend, página e uv
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force publish/app/backend, publish/app/web, publish/tools | Out-Null
+          Copy-Item -Recurse backend/app publish/app/backend/app
+          Copy-Item backend/requirements.txt, backend/check_env.py publish/app/backend/
+          Copy-Item -Recurse frontend/dist/* publish/app/web/
+          Get-ChildItem -Recurse -Directory publish/app -Filter __pycache__ | Remove-Item -Recurse -Force
+          Invoke-WebRequest "https://github.com/astral-sh/uv/releases/download/$env:UV_VERSION/uv-x86_64-pc-windows-msvc.zip" -OutFile uv.zip
+          Expand-Archive uv.zip -DestinationPath uvtmp
+          $uv = Get-ChildItem -Recurse uvtmp -Filter uv.exe | Select-Object -First 1
+          Copy-Item $uv.FullName publish/tools/uv.exe
+          Get-ChildItem publish/app, publish/tools -Recurse | Measure-Object | Select-Object Count
+
+      - name: Instalar o vpk
+        run: dotnet tool install -g vpk --version ${{ env.VPK_VERSION }}
+
+      - name: Baixar a versão anterior (para atualizações menores)
+        continue-on-error: true
+        run: vpk download github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Montar o instalador
+        run: vpk pack -u FCAnalytics -v ${{ steps.version.outputs.version }} -p publish -e FCAnalytics.exe --packTitle "FC Analytics" --packAuthors "Carlos" -i launcher/app.ico
+
+      - name: Publicar no GitHub
+        run: vpk upload github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --publish --releaseName "FC Analytics ${{ steps.version.outputs.version }}" --tag v${{ steps.version.outputs.version }}
