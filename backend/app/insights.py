@@ -39,8 +39,8 @@ FEED_LIMIT = 40
 
 DEFAULT_MODEL = "qwen3:4b-instruct"
 RECOMMENDED_MODELS = {
-    "qwen3:4b-instruct": "Qwen3 4B (2,5 GB, recomendado: divide bem a placa com a detecção)",
-    "qwen3:8b": "Qwen3 8B (5,2 GB, texto melhor, mas disputa a memória da placa)",
+    "qwen3:4b-instruct": "Qwen3 4B · 2,5 GB (recomendado)",  # divide bem a placa com a detecção
+    "qwen3:8b": "Qwen3 8B · 5,2 GB (texto melhor, mais pesado)",  # disputa a memória da placa com a detecção
 }
 DEFAULT_INTERVAL_S = 240
 INTERVAL_OPTIONS = (180, 240, 300)

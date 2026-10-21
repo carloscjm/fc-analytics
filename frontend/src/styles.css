@@ -846,3 +846,149 @@ kbd {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- Insights e dicas (Fase 5) ---------- */
+
+.llm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.llm p {
+  margin: 0;
+}
+
+.llm-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.llm-line .dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  transform: translateY(-1px);
+}
+
+.llm-line.ok .dot {
+  background: var(--ok);
+}
+
+.llm-line.warn .dot {
+  background: var(--warn);
+}
+
+.llm-line.bad .dot {
+  background: var(--bad);
+}
+
+.llm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.llm-actions .small-btn {
+  margin-top: 0;
+}
+
+.llm-settings summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.llm-settings label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.llm-settings select {
+  max-width: 190px;
+}
+
+.insights-empty {
+  margin: 10px 0 0;
+}
+
+.insights-feed {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 560px;
+  overflow: auto;
+}
+
+.insight {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.insight p {
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+
+.insight.alerta.atencao {
+  border-left-color: var(--warn);
+}
+
+.insight.analise {
+  border-left-color: var(--accent);
+  background: var(--rec);
+}
+
+.insight-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.insight-head .muted {
+  margin-left: auto;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.team-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.insight-section {
+  margin-top: 6px;
+}
+
+.insight-section ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+
+.insight-section li {
+  margin: 2px 0;
+  line-height: 1.4;
+}

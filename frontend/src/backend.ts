@@ -132,6 +132,47 @@ export interface MatchStats {
   };
 }
 
+export interface InsightAnalysis {
+  leitura: string;
+  funcionando: string[];
+  espacos: string[];
+  sugestoes: string[];
+}
+
+/** Um item do feed: alerta de regra (imediato) ou análise do LLM local. */
+export interface InsightItem {
+  id: number;
+  kind: "alerta" | "analise";
+  /** horário do PC, em ms */
+  wall: number;
+  /** segundos desde o começo da partida no app */
+  t: number;
+  team: 0 | 1 | null;
+  rule: string | null;
+  level: "info" | "atencao";
+  text: string;
+  analysis?: InsightAnalysis;
+  model?: string;
+  seconds?: number;
+}
+
+export interface LlmInfo {
+  state: "verificando" | "desligado" | "sem modelo" | "baixando" | "pronto" | "analisando" | "erro";
+  model: string;
+  installed: string[];
+  recommended: { name: string; label: string }[];
+  intervalS: number;
+  intervalOptions: number[];
+  nextInS: number | null;
+  lastError: string | null;
+  pull: { model: string; status: string; completed: number; total: number } | null;
+}
+
+export interface InsightsInfo {
+  items: InsightItem[];
+  llm: LlmInfo;
+}
+
 export interface TrackingInfo {
   active: number;
   cutsLastMinute?: number;
@@ -175,6 +216,7 @@ export interface StatusMessage {
   pitch?: { state: "ausente" | "carregando" | "baixando" | "pronto" | "erro" | "indisponível"; error: string | null };
   patterns?: PatternsInfo;
   stats?: MatchStats;
+  insights?: InsightsInfo;
 }
 
 export interface BenchmarkRow {
@@ -203,6 +245,7 @@ export type ServerMessage =
   | StatusMessage
   | ({ type: "patterns" } & PatternsInfo)
   | { type: "stats"; stats: MatchStats }
+  | ({ type: "insights" } & InsightsInfo)
   | BenchmarkMessage;
 
 export const WS_URL: string =

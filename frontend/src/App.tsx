@@ -7,11 +7,13 @@ import {
   type PatternOption,
   type PatternsInfo,
   type MatchStats,
+  type InsightsInfo,
   type TeamPattern,
   type StatusMessage,
 } from "./backend";
 import { chooseTab, FrameSender, type SenderCounters } from "./capture";
 import { DetectionOverlay, ROLE_COLORS, teamColors } from "./DetectionOverlay";
+import { InsightsPanel, type InsightCommand } from "./InsightsPanel";
 import { MatchPanel, type Command } from "./MatchPanel";
 import { PatternField3D, SECTOR_COLORS, type CameraMode, type FieldEnds, type PatternLayer } from "./PatternField3D";
 import { RollingStats, type LiveStats } from "./stats";
@@ -122,7 +124,7 @@ function fmt(value: number | null | undefined, unit = "ms"): string {
 
 export default function App() {
   const client = useMemo(() => new BackendClient(), []);
-  const sendCommand = useCallback((command: Command) => client.send(command), [client]);
+  const sendCommand = useCallback((command: Command | InsightCommand) => client.send(command), [client]);
   const senderRef = useRef<FrameSender | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const statsRef = useRef(new RollingStats());
@@ -144,6 +146,7 @@ export default function App() {
   const [selected, setSelected] = useState<string>("0-ataque");
   const [patterns, setPatterns] = useState<PatternsInfo | null>(null);
   const [matchStats, setMatchStats] = useState<MatchStats | null>(null);
+  const [insights, setInsights] = useState<InsightsInfo | null>(null);
   const [showPitch, setShowPitch] = useState(true);
   const [autoCrop, setAutoCrop] = useState(true);
 
@@ -154,7 +157,9 @@ export default function App() {
         setServer(msg);
         if (msg.patterns) setPatterns(msg.patterns);
         if (msg.stats) setMatchStats(msg.stats);
+        if (msg.insights) setInsights(msg.insights);
       }
+      if (msg.type === "insights") setInsights(msg);
       if (msg.type === "patterns") setPatterns(msg);
       if (msg.type === "stats") setMatchStats(msg.stats);
       if (msg.type === "benchmark") setBenchmark(msg);
@@ -526,6 +531,7 @@ export default function App() {
         </div>
 
         <aside className="panel">
+          <InsightsPanel info={insights} colors={colors} send={sendCommand} />
           <section className="card">
             <h2>Desempenho</h2>
             <dl>

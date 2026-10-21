@@ -2,7 +2,7 @@
 
 Analisador de futebol ao vivo que roda 100% no seu PC. Ele captura a aba do navegador com o jogo, detecta jogadores e bola, projeta tudo num mapa 3D visto de cima e gera estatísticas e insights em tempo real, sem nenhum serviço pago.
 
-**Status:** Fase 4 (estatísticas). Além dos padrões de ataque e defesa no campo 3D, o app grava a partida num banco local e mostra estatísticas dos últimos 5 minutos e da partida inteira, com gráficos e marcação de gols, cartões, substituições e intervalo pelo teclado.
+**Status:** Fase 5 (insights e dicas). Além dos padrões de ataque e defesa e das estatísticas da partida, o app mostra alertas táticos na hora e, a cada 3 a 5 minutos, uma análise escrita por um LLM que roda no próprio PC (Ollama).
 
 ## Estrutura
 
@@ -91,6 +91,15 @@ O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time e
   **I** marca o intervalo (a coleta pausa) e, apertado de novo, o começo do 2º tempo. **Z** desfaz o último evento. Os mesmos eventos têm botões no painel.
 - **Limites:** o relógio é o do app (começa quando a partida começa no app, não o do jogo). Passes, pressão e distância dependem do que aparece na imagem e são aproximados; a distância fica bem abaixo da real.
 - **Diagnóstico:** `localhost:8000/debug/stats`.
+
+## Insights e dicas (Fase 5)
+
+- **Alertas (na hora):** regras simples sobre as estatísticas, recalculadas a cada 3 s. Exemplos: linha de defesa alta (45 m ou mais do próprio gol) ou bloco baixo (25 m ou menos) por 3 minutos, 60% ou mais dos ataques pelo mesmo lado, posse de 65% ou mais, 70% ou mais do tempo no terço ofensivo, muitas perdas de bola, boa pressão depois de perder e time espaçado (48 m ou mais entre defesa e ataque). Cada alerta só se repete para o mesmo time depois de 6 minutos. As regras dos últimos 5 minutos precisam de pelo menos 1,5 minuto de jogo analisado.
+- **Análise do LLM (a cada 3, 4 ou 5 minutos):** um resumo em JSON (placar, eventos, estatísticas das duas janelas, formações e alertas recentes) vai para o Ollama. A resposta volta em JSON com a leitura do jogo, o que está funcionando, os espaços que dá para explorar e sugestões para cada time. A análise roda em segundo plano e não trava a detecção; ela só acontece se entrou pelo menos 1 minuto de jogo novo desde a anterior. O botão **Analisar agora** pede uma na hora.
+- **Modelo:** o padrão é o `qwen3:4b-instruct` (2,5 GB), que divide bem os 8 GB da placa com a detecção. O `qwen3:8b` (5,2 GB) escreve melhor, mas disputa a memória da placa. Os dois são baixados pelo próprio painel; a escolha fica salva em `backend/data/llm.json`.
+- **Ollama:** precisa estar aberto (ele fica na bandeja do Windows). Os modelos ficam em `E:\ollama\models` (variável `OLLAMA_MODELS`).
+- **Gravação:** os insights ficam no SQLite com a partida e voltam se o backend reiniciar.
+- **Diagnóstico:** `localhost:8000/debug/insights`.
 
 ## Modelo de futebol (opcional)
 
