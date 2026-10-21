@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from app.patterns import FORMATIONS, PatternStore, compute_pattern, normalize, split_lines
 
@@ -137,3 +138,55 @@ def test_transition_finds_the_fullback_going_up():
     transition(defense, attack)
     le = max(attack["roles"], key=lambda r: r["x"] if r["y"] < 15 and r["line"] < 2 else -1)
     assert sorted(r["name"] for r in attack["roles"]) == sorted(r["name"] for r in defense["roles"])
+
+
+F343 = [(20, 18), (18, 34), (20, 50), (38, 6), (36, 26), (36, 42), (38, 62), (58, 14), (60, 34), (58, 54)]
+FULL_VIEW = [[0, 0], [105, 0], [105, 68], [0, 68]]
+
+
+def test_back_line_count_needs_the_whole_width_in_view():
+    from app.patterns import count_back_line
+
+    pts = np.array(F343, dtype=np.float32)
+    assert count_back_line(pts, np.array(FULL_VIEW, np.float32)) == 3
+    half = np.array([[0, 0], [105, 0], [105, 30], [0, 30]], np.float32)  # só metade da largura na imagem
+    assert count_back_line(pts, half) is None
+    assert count_back_line(pts, None) is None
+
+
+def test_back_count_and_manual_choice_decide_the_formation():
+    from app.patterns import parse_formation
+
+    xs = np.array([22, 20, 20, 22, 40, 38, 38, 40, 60, 60], dtype=np.float32)  # dados ambíguos
+    assert len(split_lines(xs, back=3)[0]) == 3
+    assert [len(g) for g in split_lines(xs, sizes=(3, 4, 3))] == [3, 4, 3]
+    assert parse_formation("3-4-3") == (3, 4, 3)
+    for bad in ("3-4-2", "2-5-3", "x-y", "10"):
+        with pytest.raises(ValueError):
+            parse_formation(bad)
+
+
+def test_store_counts_the_back_line_and_respects_overrides():
+    store = PatternStore()
+    rng = np.random.default_rng(5)
+    for i in range(200):
+        players = [{"x": 3.0, "y": 34.0, "t": 0, "l": "goleiro", "g": False, "age": 0},
+                   {"x": 102.0, "y": 34.0, "t": 1, "l": "goleiro", "g": False, "age": 0}]
+        for x, y in F343:  # time 0 defende a esquerda num 3-4-3
+            players.append({"x": x + rng.normal(0, 1), "y": y + rng.normal(0, 1), "t": 0, "l": "jogador", "g": False, "age": 0})
+        for x, y in mirrored(F442):
+            players.append({"x": x + rng.normal(0, 1), "y": y + rng.normal(0, 1), "t": 1, "l": "jogador", "g": False, "age": 0})
+        holder = players[-1]  # time 1 com a bola: o time 0 defende
+        store.observe({"players": players, "ball": {"x": holder["x"] + 0.5, "y": holder["y"], "e": False}}, i * 0.15, FULL_VIEW)
+    summary = store.summary()
+    defense = summary["options"]["0-defesa"]
+    assert defense["backLine"]["estimate"] == 3
+    assert defense["pattern"]["formation"].startswith("3-")
+    assert defense["pattern"]["formationSource"] == "linha"
+    store.set_override(0, "defesa", (5, 3, 2))
+    manual = store.summary()["options"]["0-defesa"]
+    assert manual["pattern"]["formation"] == "5-3-2" and manual["override"] == "5-3-2"
+    assert manual["pattern"]["formationSource"] == "manual"
+    store.reset()
+    assert store.summary()["options"]["0-defesa"]["override"] == "5-3-2"  # a escolha continua depois de zerar
+    assert "3-4-3" in summary["formationOptions"]

@@ -1147,3 +1147,9 @@ kbd {
   border-color: var(--bad);
   color: #fff;
 }
+
+.formation-stat select {
+  margin-top: 6px;
+  font-size: 12px;
+  max-width: 150px;
+}

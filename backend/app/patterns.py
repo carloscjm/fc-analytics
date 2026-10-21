@@ -23,10 +23,11 @@ aproximação que melhora com mais minutos de jogo.
 from __future__ import annotations
 
 import threading
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Any
 
+import cv2
 import numpy as np
 
 from .pitch import LENGTH, WIDTH
@@ -102,7 +103,7 @@ FORMATIONS: dict[tuple[int, ...], float] = {
 FORMATION_PRIOR_WEIGHT = 0.12
 
 
-def split_lines(xs: np.ndarray) -> list[list[int]]:
+def split_lines(xs: np.ndarray, back: int | None = None, sizes: tuple[int, ...] | None = None) -> list[list[int]]:
     """Divide as 10 posições em linhas, de trás para a frente, numa formação conhecida.
 
     Para cada formação da lista, as posições (ordenadas pela profundidade) são
@@ -118,13 +119,83 @@ def split_lines(xs: np.ndarray) -> list[list[int]]:
     if n != 10 or total <= 1e-6:
         return [list(order)]
     best: tuple[float, list[list[int]]] | None = None
-    for sizes, prior in FORMATIONS.items():
+    if sizes is not None:
+        candidates = {tuple(sizes): 0.0}  # escolhida à mão
+    else:
+        candidates = FORMATIONS
+        if back is not None:
+            # Quantos defensores a última linha tem, contado quadro a quadro: só formações com esse número atrás.
+            candidates = {k: v for k, v in FORMATIONS.items() if k[0] == back} or FORMATIONS
+    for sizes, prior in candidates.items():
         bounds = np.cumsum((0, *sizes))
         within = sum(float(np.var(sorted_x[bounds[i] : bounds[i + 1]])) * sizes[i] for i in range(len(sizes)))
         cost = within / total + FORMATION_PRIOR_WEIGHT * prior
         if best is None or cost < best[0]:
             best = (cost, [list(order[bounds[i] : bounds[i + 1]]) for i in range(len(sizes))])
     return best[1]
+
+# ---------------------------------------------------------------------------
+# Linha de defesa contada quadro a quadro
+# ---------------------------------------------------------------------------
+
+BACK_LINE_BAND_M = 7.0  # quem está até 7 m à frente do defensor mais recuado faz parte da última linha
+BACK_LINE_MIN_FRAMES = 30
+BACK_LINE_MIN_SHARE = 0.45
+BACK_LINE_KEEP = 1500
+BACK_LINE_COVERAGE = 0.9
+
+
+def count_back_line(points: np.ndarray, view: np.ndarray | None) -> int | None:
+    """Quantos jogadores formam a última linha, se a câmera mostra a largura do campo na altura dela.
+
+    `points` e `view` já normalizados (time atacando para a direita, próprio gol em x = 0).
+    """
+    if view is None or len(points) < 5:
+        return None
+    deepest = float(points[:, 0].min())
+    members = int(np.sum(points[:, 0] <= deepest + BACK_LINE_BAND_M))
+    if not 2 <= members <= 6 or members == len(points):
+        return None
+    poly = view.astype(np.float32).reshape(-1, 1, 2)
+    grid = [
+        (x, y)
+        for x in (max(0.5, deepest - 8.0), deepest, deepest + BACK_LINE_BAND_M)
+        for y in np.arange(6.0, WIDTH - 5.0, 4.0)
+    ]
+    inside = sum(cv2.pointPolygonTest(poly, (float(x), float(y)), False) >= 0 for x, y in grid)
+    if inside / len(grid) < BACK_LINE_COVERAGE:
+        return None
+    return members
+
+
+def back_line_summary(counts: deque | list) -> dict[str, Any]:
+    values = list(counts)
+    total = len(values)
+    tally = Counter(values)
+    estimate, share = None, 0.0
+    if total:
+        top, n = tally.most_common(1)[0]
+        share = n / total
+        if total >= BACK_LINE_MIN_FRAMES and share >= BACK_LINE_MIN_SHARE and 3 <= top <= 5:
+            estimate = int(top)
+    return {
+        "counts": {str(k): v for k, v in sorted(tally.items())},
+        "total": total,
+        "estimate": estimate,
+        "share": round(share, 2),
+    }
+
+
+def parse_formation(text: str) -> tuple[int, ...]:
+    """\"3-4-3\" → (3, 4, 3). Precisa somar 10 jogadores de linha, em 3 ou 4 linhas."""
+    try:
+        sizes = tuple(int(p) for p in str(text).strip().split("-"))
+    except ValueError as exc:
+        raise ValueError("formação inválida") from exc
+    if sum(sizes) != 10 or not 3 <= len(sizes) <= 4 or min(sizes) < 1 or not 3 <= sizes[0] <= 5:
+        raise ValueError("a formação precisa ter 10 jogadores de linha, em 3 ou 4 linhas, com 3 a 5 atrás")
+    return sizes
+
 
 # ---------------------------------------------------------------------------
 # Nome de cada posição (o time sempre atacando para a direita; y pequeno = lado esquerdo do time)
@@ -208,7 +279,9 @@ def best_roles(points: np.ndarray, restarts: int = 6) -> tuple[np.ndarray, np.nd
     return centers, labels
 
 
-def compute_pattern(frames: list[np.ndarray]) -> dict[str, Any] | None:
+def compute_pattern(
+    frames: list[np.ndarray], back: int | None = None, forced: tuple[int, ...] | None = None
+) -> dict[str, Any] | None:
     if len(frames) < MIN_FRAMES_FOR_PATTERN:
         return None
     points = np.vstack(frames).astype(np.float32)
@@ -222,7 +295,7 @@ def compute_pattern(frames: list[np.ndarray]) -> dict[str, Any] | None:
             for j in range(ROLES)
         ]
     )
-    lines = split_lines(centers[:, 0])
+    lines = split_lines(centers[:, 0], back=back, sizes=forced)
     formation = "-".join(str(len(g)) for g in lines)
     line_of = np.zeros(ROLES, dtype=int)
     for i, g in enumerate(lines):
@@ -254,6 +327,7 @@ def compute_pattern(frames: list[np.ndarray]) -> dict[str, Any] | None:
 
     return {
         "formation": formation,
+        "formationSource": "manual" if forced is not None else ("linha" if back is not None else "auto"),
         "roles": [
             {
                 "x": round(float(c[0]), 2),
@@ -295,11 +369,30 @@ class PatternStore:
             self.candidate_frames = 0
             self.last_ts: float | None = None
             self.phase_frames = {"bola": 0, "avanço": 0, "sem fase": 0}
+            self.back_counts: dict[tuple[int, str], deque] = {
+                (t, p): deque(maxlen=BACK_LINE_KEEP) for t in (0, 1) for p in PHASES
+            }
             self.cached: dict[str, Any] | None = None
+            # Formações escolhidas à mão continuam depois de "Zerar padrões" (são decisão de quem assiste).
+            if not hasattr(self, "overrides"):
+                self.overrides: dict[tuple[int, str], tuple[int, ...]] = {}
 
     # ---------- um frame ----------
 
-    def observe(self, field_map: dict[str, Any], ts: float) -> None:
+    def set_override(self, team: int, phase: str, sizes: tuple[int, ...] | None) -> None:
+        if team not in (0, 1) or phase not in PHASES:
+            raise ValueError("time ou fase inválidos")
+        with self._lock:
+            if sizes is None:
+                self.overrides.pop((team, phase), None)
+            else:
+                self.overrides[(team, phase)] = tuple(sizes)
+
+    def clear_overrides(self) -> None:
+        with self._lock:
+            self.overrides = {}
+
+    def observe(self, field_map: dict[str, Any], ts: float, view: list[list[float]] | None = None) -> None:
         """Recebe o mapa do frame (jogadores em metros) quando a cena é de jogo ao vivo."""
         with self._lock:
             dt = 0.0 if self.last_ts is None else min(max(ts - self.last_ts, 0.0), 0.5)
@@ -331,6 +424,16 @@ class PatternStore:
                 bucket = self.samples[(t, phase)]
                 bucket.frames.append(normalize(pts, defends_left))
                 bucket.seconds += dt
+                if view is not None:
+                    seen = np.array(
+                        [[p["x"], p["y"]] for p in players if p["t"] == t and p["l"] in OUTFIELD_ROLES and not p.get("g")],
+                        np.float32,
+                    ).reshape(-1, 2)
+                    count = count_back_line(
+                        normalize(seen, defends_left), normalize(np.array(view, np.float32), defends_left)
+                    )
+                    if count is not None:
+                        self.back_counts[(t, phase)].append(count)
 
     def _update_side(self, players: list[dict[str, Any]], ts: float) -> None:
         evidence = 0.0
@@ -392,12 +495,20 @@ class PatternStore:
     def summary(self) -> dict[str, Any]:
         with self._lock:
             frames = {key: list(bucket.frames) for key, bucket in self.samples.items()}
+            backs = {key: back_line_summary(c) for key, c in self.back_counts.items()}
+            overrides = dict(self.overrides)
             seconds = {key: bucket.seconds for key, bucket in self.samples.items()}
             side = self.side.team0_defends_left()
             phase_frames = dict(self.phase_frames)
-        out: dict[str, Any] = {"options": {}, "phaseSource": phase_frames, "team0DefendsLeft": side}
+        out: dict[str, Any] = {
+            "options": {},
+            "phaseSource": phase_frames,
+            "team0DefendsLeft": side,
+            "formationOptions": ["-".join(str(n) for n in k) for k in FORMATIONS],
+        }
         for (t, phase), f in frames.items():
-            pattern = compute_pattern(f)
+            sizes = overrides.get((t, phase))
+            pattern = compute_pattern(f, back=backs[(t, phase)]["estimate"], forced=sizes)
             out["options"][f"{t}-{phase}"] = {
                 "team": t,
                 "phase": phase,
@@ -405,6 +516,8 @@ class PatternStore:
                 "seconds": round(seconds[(t, phase)], 1),
                 "needed": MIN_FRAMES_FOR_PATTERN,
                 "pattern": pattern,
+                "backLine": backs[(t, phase)],
+                "override": "-".join(str(n) for n in sizes) if sizes else None,
             }
         out["transitions"] = {
             str(t): transition(out["options"][f"{t}-defesa"]["pattern"], out["options"][f"{t}-ataque"]["pattern"])

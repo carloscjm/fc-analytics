@@ -71,6 +71,16 @@ export interface TeamPattern {
   corridors: { esquerda: number; centro: number; direita: number } | null;
   heat: { nx: number; ny: number; cell: number; values: number[] };
   points: number;
+  /** como a formação foi decidida: escolhida à mão, contagem da linha de defesa ou posições médias */
+  formationSource?: "manual" | "linha" | "auto";
+}
+
+/** Quantos jogadores formavam a última linha, contado nos quadros em que ela aparecia inteira. */
+export interface BackLineInfo {
+  counts: Record<string, number>;
+  total: number;
+  estimate: number | null;
+  share: number;
 }
 
 export interface PatternOption {
@@ -80,6 +90,9 @@ export interface PatternOption {
   seconds: number;
   needed: number;
   pattern: TeamPattern | null;
+  backLine?: BackLineInfo;
+  /** formação escolhida à mão para este time nesta fase */
+  override?: string | null;
 }
 
 export interface PatternMove {
@@ -103,6 +116,8 @@ export interface PatternsInfo {
   options: Record<string, PatternOption>;
   phaseSource: { bola: number; "avanço": number; "sem fase": number };
   team0DefendsLeft: boolean | null;
+  /** formações que dá para escolher à mão */
+  formationOptions?: string[];
   /** defesa → ataque de cada time ("0" e "1") */
   transitions?: Record<string, PatternTransition | null>;
 }

@@ -186,6 +186,10 @@ def build_summary(stats: dict[str, Any], patterns: dict[str, Any] | None, alerts
             team, phase = key.split("-")
             formations[f"{names[int(team)]} {'atacando' if phase == 'ataque' else 'defendendo'}"] = {
                 "formacao": pattern.get("formation"),
+                "formacao_definida_por": {
+                    "manual": "quem assiste (escolhida à mão)",
+                    "linha": "contagem da linha de defesa",
+                }.get(pattern.get("formationSource"), "posições médias"),
                 "linha_defesa_m": pattern.get("lineHeight"),
                 "largura_m": pattern.get("width"),
             }

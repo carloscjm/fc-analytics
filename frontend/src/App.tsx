@@ -127,14 +127,55 @@ function TransitionStats({ transition, name }: { transition: PatternTransition; 
   );
 }
 
-function PatternStats({ option, pattern, heading }: { option: PatternOption; pattern: TeamPattern; heading?: string }) {
+function backLineText(option: PatternOption): string | null {
+  const back = option.backLine;
+  if (!back || back.total === 0) return null;
+  const top = Object.entries(back.counts).sort((a, b) => b[1] - a[1])[0];
+  return `${top[0]} atrás em ${Math.round((100 * top[1]) / back.total)}% de ${back.total} lances com a defesa toda na imagem`;
+}
+
+function PatternStats({
+  option,
+  pattern,
+  heading,
+  formations,
+  onFormation,
+}: {
+  option: PatternOption;
+  pattern: TeamPattern;
+  heading?: string;
+  formations: string[];
+  onFormation: (formation: string | null) => void;
+}) {
+  const counted = backLineText(option);
+  const source =
+    pattern.formationSource === "manual"
+      ? "escolhida por você"
+      : pattern.formationSource === "linha"
+        ? `pela linha de defesa: ${counted}`
+        : counted
+          ? `pelas posições médias (linha de defesa: ${counted}; ainda pouco para decidir)`
+          : "pelas posições médias";
   return (
     <div className="stats-group">
       {heading && <p className="stats-heading">{heading}</p>}
       <div className="stats">
-        <div className="stat">
+        <div className="stat formation-stat">
           <span className="muted small">Formação</span>
           <strong className="huge">{pattern.formation}</strong>
+          <span className="muted small">{source}</span>
+          <select
+            aria-label="Corrigir a formação"
+            value={option.override ?? ""}
+            onChange={(e) => onFormation(e.target.value || null)}
+          >
+            <option value="">Automática</option>
+            {formations.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="stat">
           <span className="muted small">Linha de defesa</span>
@@ -517,6 +558,10 @@ export default function App() {
               key={part.option}
               option={option!}
               pattern={option!.pattern!}
+              formations={patterns?.formationOptions ?? []}
+              onFormation={(formation) =>
+                client.send({ type: "set_formation", team: part.team, phase: option!.phase, formation })
+              }
               heading={duo ? `${teamName(part.team)} ${part.mirror ? "defendendo" : "atacando"}` : undefined}
             />
           ))}

@@ -585,6 +585,19 @@ async def handle_command(
         if kind == "new_match":
             await broadcast(websocket.app, {"type": "patterns", **pipeline.latest_patterns()})
 
+    elif kind == "set_formation":
+        pipeline = websocket.app.state.pipeline
+        if pipeline is None:
+            return
+        try:
+            await asyncio.to_thread(
+                pipeline.set_formation, int(data.get("team", -1)), str(data.get("phase", "")), data.get("formation") or None
+            )
+        except (TypeError, ValueError) as exc:
+            await send(websocket, {"type": "error", "detail": str(exc)})
+            return
+        await broadcast(websocket.app, {"type": "patterns", **pipeline.latest_patterns()})
+
     elif kind == "wipe_data":
         pipeline = websocket.app.state.pipeline
         if pipeline is None:

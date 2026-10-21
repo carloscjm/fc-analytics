@@ -24,7 +24,7 @@ from typing import Any
 import numpy as np
 
 from .ball import BallTracker
-from .patterns import PatternStore
+from .patterns import PatternStore, parse_formation
 from .insights import InsightEngine
 from .teamnames import TeamNameReader, TeamNames, clean_names
 from .stats import MatchStore, StatsTracker, default_data_dir
@@ -102,6 +102,7 @@ class Pipeline:
         self.name_reader = TeamNameReader()
         self.names_lock = threading.Lock()
         self.team_names = self._load_names()
+        self._load_overrides()
         self.stats_latest: dict[str, Any] | None = None
         self.stats_version = 0
         self.stats_sent = -1
@@ -259,8 +260,9 @@ class Pipeline:
         snapshot = self.map.snapshot(ts)
         if wide and self.team_names.source != "manual":
             self.name_reader.maybe_read(image, on_done=self._update_names)
+        view_area = visible_area(view.h, width, height) if view is not None else None
         if view is not None and view.fresh:
-            self.patterns.observe(snapshot, ts)
+            self.patterns.observe(snapshot, ts, view_area)
             self.stats.observe(snapshot, self.patterns.side.team0_defends_left(), time.time())
         self._maybe_summarize(ts)
         self._maybe_stats()
@@ -276,7 +278,7 @@ class Pipeline:
             if keypoints is not None
             else [],
             "cut": cut,
-            "view": visible_area(view.h, width, height) if view is not None else None,
+            "view": view_area,
             "hInv": [round(float(v), 6) for v in view.h_inv.reshape(-1)] if view is not None else None,
         }
 
@@ -386,6 +388,7 @@ class Pipeline:
         Os modelos baixados e as configurações (modelo do LLM, intervalo) ficam.
         """
         freed = self.stats.wipe()
+        self.patterns.clear_overrides()
         with self.names_lock:
             self.team_names = TeamNames()
             self.name_reader.reset()
@@ -397,9 +400,38 @@ class Pipeline:
     def storage_bytes(self) -> int:
         return self.stats.store.size_bytes() if self.stats.store else 0
 
+    # ---------- formação escolhida à mão ----------
+
+    def _load_overrides(self) -> None:
+        store = self.stats.store
+        data = store.get_meta(self.stats.match_id, "formations") if store else None
+        self.patterns.clear_overrides()
+        for key, text in (data or {}).items():
+            try:
+                team, phase = key.split("-")
+                self.patterns.set_override(int(team), phase, parse_formation(text))
+            except ValueError:
+                log.warning("formação salva inválida: %s=%s", key, text)
+
+    def set_formation(self, team: int, phase: str, text: str | None) -> None:
+        """Formação escolhida para um time numa fase (None volta ao automático)."""
+        sizes = parse_formation(text) if text else None
+        self.patterns.set_override(team, phase, sizes)
+        if self.stats.store is not None:
+            current = self.stats.store.get_meta(self.stats.match_id, "formations") or {}
+            key = f"{team}-{phase}"
+            if sizes:
+                current[key] = "-".join(str(n) for n in sizes)
+            else:
+                current.pop(key, None)
+            self.stats.store.set_meta(self.stats.match_id, "formations", current)
+        self.patterns_latest = self.patterns.summary()
+        self.patterns_version += 1
+
     def new_match(self) -> None:
         """Partida nova: estatísticas, eventos, padrões e nomes dos times recomeçam."""
         self.stats.new_match()
+        self.patterns.clear_overrides()
         with self.names_lock:
             self.team_names = TeamNames()
             self.name_reader.reset()

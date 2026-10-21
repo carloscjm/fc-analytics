@@ -228,3 +228,15 @@ def test_wipe_data_resets_everything(client):
     assert kinds[2]["items"] == []
     assert kinds[3]["freedBytes"] >= 0
     ws.__exit__(None, None, None)
+
+
+def test_set_formation_command(client):
+    ws, conn, status = open_ws(client)
+    conn.send_json({"type": "set_formation", "team": 0, "phase": "defesa", "formation": "3-4-3"})
+    message = conn.receive_json()
+    assert message["type"] == "patterns" and message["options"]["0-defesa"]["override"] == "3-4-3"
+    conn.send_json({"type": "set_formation", "team": 0, "phase": "defesa", "formation": "3-4-2"})
+    assert conn.receive_json()["type"] == "error"
+    conn.send_json({"type": "set_formation", "team": 0, "phase": "defesa", "formation": None})
+    assert conn.receive_json()["options"]["0-defesa"]["override"] is None
+    ws.__exit__(None, None, None)
