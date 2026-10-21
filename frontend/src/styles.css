@@ -623,3 +623,16 @@ dd.big {
 .stats-duo .stats {
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
 }
+
+.legend.sectors {
+  top: auto;
+  bottom: 10px;
+  left: 10px;
+  right: auto;
+}
+
+.legend .bar {
+  width: 16px;
+  height: 4px;
+  border-radius: 2px;
+}

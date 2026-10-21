@@ -13,10 +13,21 @@ export interface PatternLayer {
   mirror: boolean;
 }
 
+/** De quem é cada gol. O ataque vai sempre da esquerda para a direita. */
+export interface FieldEnds {
+  /** gol de quem ataca */
+  left: { label: string; color: string };
+  /** gol de quem defende */
+  right: { label: string; color: string };
+  /** frase na lateral de cá, por exemplo "Time A ataca → Time B defende" */
+  center: string;
+}
+
 interface Props {
   layers: PatternLayer[];
   mode: CameraMode;
   showHeat: boolean;
+  ends: FieldEnds;
 }
 
 const MAX_LAYERS = 2;
@@ -31,7 +42,7 @@ function toScene(x: number, y: number, height = 0): THREE.Vector3 {
   return new THREE.Vector3(x - LENGTH / 2, height, y - WIDTH / 2);
 }
 
-function pitchTexture(): THREE.CanvasTexture {
+function pitchTexture(ends: FieldEnds): THREE.CanvasTexture {
   const w = Math.round((LENGTH + 2 * MARGIN) * PX_PER_M);
   const h = Math.round((WIDTH + 2 * MARGIN) * PX_PER_M);
   const canvas = document.createElement("canvas");
@@ -66,13 +77,35 @@ function pitchTexture(): THREE.CanvasTexture {
     ctx.arc(u, v, 0.25 * PX_PER_M, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Sentido do ataque, escrito na faixa de grama além da lateral de cá.
-  const [, ay] = px(LENGTH / 2, WIDTH + MARGIN / 2);
-  ctx.fillStyle = "rgba(255,255,255,0.6)";
-  ctx.font = `600 ${Math.round(2.4 * PX_PER_M)}px system-ui, sans-serif`;
+  // Faixas atrás de cada gol na cor do dono, com o nome escrito: deixa claro de quem é cada gol.
+  const band = MARGIN * PX_PER_M;
+  const font = (m: number) => `700 ${Math.round(m * PX_PER_M)}px system-ui, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("sentido do ataque  →", w / 2, ay);
+  for (const [end, x0, angle] of [
+    [ends.left, 0, -Math.PI / 2],
+    [ends.right, w - band, Math.PI / 2],
+  ] as const) {
+    ctx.globalAlpha = 0.75;
+    ctx.fillStyle = end.color;
+    ctx.fillRect(x0, 0, band, h);
+    ctx.globalAlpha = 1;
+    ctx.save();
+    ctx.translate(x0 + band / 2, h / 2);
+    ctx.rotate(angle);
+    ctx.font = font(2.6);
+    ctx.lineWidth = 0.5 * PX_PER_M;
+    ctx.strokeStyle = "rgba(0,0,0,0.55)";
+    ctx.strokeText(end.label.toUpperCase(), 0, 0);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(end.label.toUpperCase(), 0, 0);
+    ctx.restore();
+  }
+  // Quem ataca e quem defende, escrito na faixa de grama além da lateral de cá.
+  const [, ay] = px(LENGTH / 2, WIDTH + MARGIN / 2);
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.font = font(2.4);
+  ctx.fillText(ends.center, w / 2, ay);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 8;
@@ -214,6 +247,40 @@ function paint(figure: PlayerFigure, color: string): void {
   figure.socks.color.copy(base).multiplyScalar(0.8);
 }
 
+// Cor de cada setor nas linhas da formação.
+export const SECTOR_COLORS = { defesa: "#2f7bff", meio: "#facc15", ataque: "#ef4444" } as const;
+const sectorMaterials = {
+  defesa: new THREE.MeshBasicMaterial({ color: SECTOR_COLORS.defesa }),
+  meio: new THREE.MeshBasicMaterial({ color: SECTOR_COLORS.meio }),
+  ataque: new THREE.MeshBasicMaterial({ color: SECTOR_COLORS.ataque }),
+};
+const LINE_WIDTH_M = 0.8;
+const segmentGeometry = new THREE.BoxGeometry(1, 0.06, LINE_WIDTH_M);
+const jointGeometry = new THREE.CylinderGeometry(LINE_WIDTH_M / 2, LINE_WIDTH_M / 2, 0.06, 16);
+
+function sectorOf(line: number, lineCount: number): keyof typeof sectorMaterials {
+  if (line === 0) return "defesa";
+  if (line === lineCount - 1) return "ataque";
+  return "meio";
+}
+
+/** Faixa grossa no gramado ligando os pontos, na cor do setor. */
+function addRibbon(group: THREE.Group, pts: THREE.Vector3[], material: THREE.MeshBasicMaterial): void {
+  for (let i = 0; i < pts.length; i++) {
+    const joint = new THREE.Mesh(jointGeometry, material);
+    joint.position.copy(pts[i]);
+    group.add(joint);
+    if (i === 0) continue;
+    const a = pts[i - 1];
+    const b = pts[i];
+    const segment = new THREE.Mesh(segmentGeometry, material);
+    segment.position.copy(a).add(b).multiplyScalar(0.5);
+    segment.scale.x = a.distanceTo(b);
+    segment.rotation.y = -Math.atan2(b.z - a.z, b.x - a.x);
+    group.add(segment);
+  }
+}
+
 /** Ordem estável das posições entre atualizações: por linha e, dentro dela, da esquerda para a direita. */
 function ordered(roles: PatternRole[]): PatternRole[] {
   return [...roles].sort((a, b) => a.line - b.line || a.y - b.y);
@@ -233,6 +300,7 @@ interface SceneState {
   targets: THREE.Vector3[];
   lines: THREE.Group;
   heats: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[];
+  field: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
 }
 
 function placeCamera(state: SceneState, mode: CameraMode, width: number, height: number): void {
@@ -244,7 +312,7 @@ function placeCamera(state: SceneState, mode: CameraMode, width: number, height:
     const needW = (LENGTH + 2 * MARGIN) / 2 / (Math.tan(fov / 2) * aspect);
     camera.position.set(0, Math.max(needH, needW), 0.01);
   } else {
-    const scale = Math.max(1, 1.47 / aspect);
+    const scale = Math.max(1, 1.47 / aspect) * 1.1; // folga para as faixas atrás dos gols
     camera.position.set(0, 72 * scale, 104 * scale);
   }
   controls.target.set(0, 0, mode === "top" ? 0 : 6);
@@ -252,7 +320,7 @@ function placeCamera(state: SceneState, mode: CameraMode, width: number, height:
 }
 
 /** Campo 3D com o padrão de um time: posições médias, linhas da formação e mapa de calor. */
-export function PatternField3D({ layers, mode, showHeat }: Props) {
+export function PatternField3D({ layers, mode, showHeat, ends }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<SceneState | null>(null);
   const modeRef = useRef(mode);
@@ -280,7 +348,7 @@ export function PatternField3D({ layers, mode, showHeat }: Props) {
 
     const field = new THREE.Mesh(
       new THREE.PlaneGeometry(LENGTH + 2 * MARGIN, WIDTH + 2 * MARGIN),
-      new THREE.MeshStandardMaterial({ map: pitchTexture(), roughness: 1 }),
+      new THREE.MeshStandardMaterial({ roughness: 1 }),
     );
     field.rotation.x = -Math.PI / 2;
     scene.add(field);
@@ -310,6 +378,7 @@ export function PatternField3D({ layers, mode, showHeat }: Props) {
       targets: [],
       lines,
       heats,
+      field,
     };
     for (let i = 0; i < ROLES * MAX_LAYERS; i++) {
       const figure = makePlayer();
@@ -358,6 +427,17 @@ export function PatternField3D({ layers, mode, showHeat }: Props) {
     };
   }, []);
 
+  const endsKey = JSON.stringify(ends);
+  useEffect(() => {
+    const state = stateRef.current;
+    if (!state) return;
+    const material = state.field.material;
+    material.map?.dispose();
+    material.map = pitchTexture(ends);
+    material.needsUpdate = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endsKey]);
+
   useEffect(() => {
     modeRef.current = mode;
     const state = stateRef.current;
@@ -371,10 +451,8 @@ export function PatternField3D({ layers, mode, showHeat }: Props) {
     if (!state) return;
     const first = state.figures.every((f) => !f.group.visible);
 
-    for (const child of [...state.lines.children]) {
-      state.lines.remove(child);
-      (child as THREE.Line).geometry.dispose();
-    }
+    // Geometrias e materiais das linhas são compartilhados: basta tirar da cena.
+    state.lines.clear();
 
     for (let layerIndex = 0; layerIndex < MAX_LAYERS; layerIndex++) {
       const layer = layers[layerIndex];
@@ -397,19 +475,21 @@ export function PatternField3D({ layers, mode, showHeat }: Props) {
         figure.group.visible = true;
       }
 
-      // Linhas da formação: liga as posições de cada linha, de um lado ao outro.
+      // Linhas da formação: liga as posições de cada linha, de um lado ao outro,
+      // em azul (defesa), amarelo (meio-campo) ou vermelho (ataque).
       if (pattern && layer) {
         const byLine = new Map<number, PatternRole[]>();
         for (const r of roles) byLine.set(r.line, [...(byLine.get(r.line) ?? []), r]);
-        for (const group of byLine.values()) {
-          if (group.length < 2) continue;
-          const pts = group.sort((a, b) => a.y - b.y).map((r) => toScene(r.x, r.y, 0.06));
-          state.lines.add(
-            new THREE.Line(
-              new THREE.BufferGeometry().setFromPoints(pts),
-              new THREE.LineBasicMaterial({ color: layers.length > 1 ? layer.color : "#ffffff", transparent: true, opacity: 0.85 }),
-            ),
-          );
+        const lineCount = Math.max(...roles.map((r) => r.line)) + 1;
+        for (const [line, group] of byLine) {
+          const material = sectorMaterials[sectorOf(line, lineCount)];
+          const sorted = group.sort((a, b) => a.y - b.y);
+          // Sozinho na linha (um centroavante, por exemplo): um traço curto, para a cor aparecer.
+          const pts =
+            sorted.length > 1
+              ? sorted.map((r) => toScene(r.x, r.y, 0.04))
+              : [toScene(sorted[0].x, sorted[0].y - 2.5, 0.04), toScene(sorted[0].x, sorted[0].y + 2.5, 0.04)];
+          addRibbon(state.lines, pts, material);
         }
       }
 

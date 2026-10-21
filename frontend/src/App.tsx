@@ -11,7 +11,7 @@ import {
 } from "./backend";
 import { chooseTab, FrameSender, type SenderCounters } from "./capture";
 import { DetectionOverlay, ROLE_COLORS, teamColors } from "./DetectionOverlay";
-import { PatternField3D, type CameraMode, type PatternLayer } from "./PatternField3D";
+import { PatternField3D, SECTOR_COLORS, type CameraMode, type FieldEnds, type PatternLayer } from "./PatternField3D";
 import { RollingStats, type LiveStats } from "./stats";
 
 const INTERVALS = [100, 125, 150, 175, 200];
@@ -29,16 +29,20 @@ interface View {
   key: string;
   title: string;
   parts: ViewPart[];
+  /** quem ataca nos momentos mostrados (sai do gol da esquerda) */
+  attacker: 0 | 1;
 }
 
 const VIEWS: View[] = [
-  { key: "0-ataque", title: "Time A ataca", parts: [{ option: "0-ataque", team: 0, mirror: false }] },
-  { key: "0-defesa", title: "Time A defende", parts: [{ option: "0-defesa", team: 0, mirror: false }] },
-  { key: "1-ataque", title: "Time B ataca", parts: [{ option: "1-ataque", team: 1, mirror: false }] },
-  { key: "1-defesa", title: "Time B defende", parts: [{ option: "1-defesa", team: 1, mirror: false }] },
+  // Em todas as opções o ataque vai da esquerda para a direita: quem defende fica girado, protegendo o gol da direita.
+  { key: "0-ataque", title: "Time A ataca", attacker: 0, parts: [{ option: "0-ataque", team: 0, mirror: false }] },
+  { key: "0-defesa", title: "Time A defende", attacker: 1, parts: [{ option: "0-defesa", team: 0, mirror: true }] },
+  { key: "1-ataque", title: "Time B ataca", attacker: 1, parts: [{ option: "1-ataque", team: 1, mirror: false }] },
+  { key: "1-defesa", title: "Time B defende", attacker: 0, parts: [{ option: "1-defesa", team: 1, mirror: true }] },
   {
     key: "A-x-B",
     title: "A ataca × B defende",
+    attacker: 0,
     parts: [
       { option: "0-ataque", team: 0, mirror: false },
       { option: "1-defesa", team: 1, mirror: true },
@@ -47,6 +51,7 @@ const VIEWS: View[] = [
   {
     key: "B-x-A",
     title: "B ataca × A defende",
+    attacker: 1,
     parts: [
       { option: "1-ataque", team: 1, mirror: false },
       { option: "0-defesa", team: 0, mirror: true },
@@ -257,6 +262,16 @@ export default function App() {
     [view, patterns, colors],
   );
   const missing = viewParts.filter(({ option }) => !option?.pattern);
+  const attacker = view.attacker;
+  const defender: 0 | 1 = attacker === 0 ? 1 : 0;
+  const ends: FieldEnds = useMemo(
+    () => ({
+      left: { label: `gol do ${teamName(attacker)}`, color: colors[attacker] },
+      right: { label: `gol do ${teamName(defender)}`, color: colors[defender] },
+      center: `${teamName(attacker)} ataca  →  ${teamName(defender)} defende`,
+    }),
+    [attacker, defender, colors],
+  );
   const duo = view.parts.length > 1;
 
   let fieldNote = "Aguardando a captura";
@@ -327,17 +342,23 @@ export default function App() {
       </div>
 
       <div className="map-wrap">
-        <PatternField3D layers={layers} mode={cameraMode} showHeat={showHeat} />
-        {duo && (
-          <div className="legend">
-            {view.parts.map((part) => (
-              <span key={part.option}>
-                <span className="swatch" style={{ background: colors[part.team] }} />
-                {teamName(part.team)} {part.mirror ? "defendendo ←" : "atacando →"}
-              </span>
-            ))}
-          </div>
-        )}
+        <PatternField3D layers={layers} mode={cameraMode} showHeat={showHeat} ends={ends} />
+        <div className="legend">
+          {view.parts.map((part) => (
+            <span key={part.option}>
+              <span className="swatch" style={{ background: colors[part.team] }} />
+              {teamName(part.team)} {part.mirror ? "defendendo o gol da direita" : "atacando →"}
+            </span>
+          ))}
+        </div>
+        <div className="legend sectors">
+          {(Object.entries(SECTOR_COLORS) as [string, string][]).map(([name, color]) => (
+            <span key={name}>
+              <span className="bar" style={{ background: color }} />
+              {name}
+            </span>
+          ))}
+        </div>
         <div className="scene-badge">
           <span className="dot" />
           {fieldNote}
@@ -373,9 +394,10 @@ export default function App() {
       )}
 
       <p className="muted small map-foot">
-        {duo
-          ? "Os dois padrões vêm dos mesmos momentos do jogo: o time que ataca vai para a direita e o que defende fica do outro lado. "
-          : "O time aparece sempre atacando da esquerda para a direita; esquerda e direita são do ponto de vista dele. "}
+        O ataque vai sempre da esquerda para a direita: o gol da esquerda é de quem ataca e o da direita é de quem
+        defende (as faixas atrás dos gols têm a cor do dono). Nos números, esquerda e direita são do ponto de vista
+        de cada time.{" "}
+        {duo && "Os dois padrões vêm dos mesmos momentos do jogo. "}
         Cada jogador é uma posição média do time naquela fase. A câmera da TV não mostra o campo
         inteiro, então é uma aproximação que melhora com mais minutos de jogo.
         {sourceTotal > 0 && (
