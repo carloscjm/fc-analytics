@@ -250,35 +250,15 @@ function paint(figure: PlayerFigure, color: string): void {
 // Cor de cada setor nas linhas da formação.
 export const SECTOR_COLORS = { defesa: "#2f7bff", meio: "#facc15", ataque: "#ef4444" } as const;
 const sectorMaterials = {
-  defesa: new THREE.MeshBasicMaterial({ color: SECTOR_COLORS.defesa }),
-  meio: new THREE.MeshBasicMaterial({ color: SECTOR_COLORS.meio }),
-  ataque: new THREE.MeshBasicMaterial({ color: SECTOR_COLORS.ataque }),
+  defesa: new THREE.LineBasicMaterial({ color: SECTOR_COLORS.defesa }),
+  meio: new THREE.LineBasicMaterial({ color: SECTOR_COLORS.meio }),
+  ataque: new THREE.LineBasicMaterial({ color: SECTOR_COLORS.ataque }),
 };
-const LINE_WIDTH_M = 0.8;
-const segmentGeometry = new THREE.BoxGeometry(1, 0.06, LINE_WIDTH_M);
-const jointGeometry = new THREE.CylinderGeometry(LINE_WIDTH_M / 2, LINE_WIDTH_M / 2, 0.06, 16);
 
 function sectorOf(line: number, lineCount: number): keyof typeof sectorMaterials {
   if (line === 0) return "defesa";
   if (line === lineCount - 1) return "ataque";
   return "meio";
-}
-
-/** Faixa grossa no gramado ligando os pontos, na cor do setor. */
-function addRibbon(group: THREE.Group, pts: THREE.Vector3[], material: THREE.MeshBasicMaterial): void {
-  for (let i = 0; i < pts.length; i++) {
-    const joint = new THREE.Mesh(jointGeometry, material);
-    joint.position.copy(pts[i]);
-    group.add(joint);
-    if (i === 0) continue;
-    const a = pts[i - 1];
-    const b = pts[i];
-    const segment = new THREE.Mesh(segmentGeometry, material);
-    segment.position.copy(a).add(b).multiplyScalar(0.5);
-    segment.scale.x = a.distanceTo(b);
-    segment.rotation.y = -Math.atan2(b.z - a.z, b.x - a.x);
-    group.add(segment);
-  }
 }
 
 /** Ordem estável das posições entre atualizações: por linha e, dentro dela, da esquerda para a direita. */
@@ -451,8 +431,10 @@ export function PatternField3D({ layers, mode, showHeat, ends }: Props) {
     if (!state) return;
     const first = state.figures.every((f) => !f.group.visible);
 
-    // Geometrias e materiais das linhas são compartilhados: basta tirar da cena.
-    state.lines.clear();
+    for (const child of [...state.lines.children]) {
+      state.lines.remove(child);
+      (child as THREE.Line).geometry.dispose();
+    }
 
     for (let layerIndex = 0; layerIndex < MAX_LAYERS; layerIndex++) {
       const layer = layers[layerIndex];
@@ -489,7 +471,7 @@ export function PatternField3D({ layers, mode, showHeat, ends }: Props) {
             sorted.length > 1
               ? sorted.map((r) => toScene(r.x, r.y, 0.04))
               : [toScene(sorted[0].x, sorted[0].y - 2.5, 0.04), toScene(sorted[0].x, sorted[0].y + 2.5, 0.04)];
-          addRibbon(state.lines, pts, material);
+          state.lines.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), material));
         }
       }
 
