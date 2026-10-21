@@ -25,7 +25,7 @@ from .protocol import FrameFormatError, parse_frame
 
 FOOTBALL_MODEL = "football-player-detection.pt"
 
-VERSION = "0.7.3"
+VERSION = "0.8.0"
 log = logging.getLogger("fc-analytics")
 
 
@@ -147,7 +147,8 @@ async def insights_pump(app: FastAPI) -> None:
         if pipeline is None:
             continue
         try:
-            if ticks % 5 == 0:
+            # Com a partida pausada ou finalizada não há jogo novo para analisar.
+            if ticks % 5 == 0 and pipeline.stats.recording:
                 await asyncio.to_thread(pipeline.insights.tick)
             ticks += 1
             if pipeline.insights.version != sent:
@@ -322,6 +323,16 @@ def debug_names() -> dict:
 def debug_insights() -> dict:
     pipeline = getattr(app.state, "pipeline", None)
     return {"ready": False} if pipeline is None else {"ready": True, **pipeline.insights.snapshot()}
+
+
+@app.get("/report.html")
+async def match_report() -> Response:
+    """Relatório da partida atual, para a página salvar no arquivo escolhido."""
+    pipeline = getattr(app.state, "pipeline", None)
+    if pipeline is None:
+        return Response("O relatório precisa das bibliotecas do tracking.", status_code=503)
+    html = await asyncio.to_thread(pipeline.report_html, VERSION)
+    return Response(html, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/debug/patterns")
@@ -583,6 +594,27 @@ async def handle_command(
         if websocket.app.state.pipeline is not None:
             websocket.app.state.pipeline.reset_patterns()
             await broadcast(websocket.app, {"type": "patterns", **websocket.app.state.pipeline.latest_patterns()})
+
+    elif kind in ("create_match", "pause_match", "resume_match", "finish_match", "set_match_name"):
+        pipeline = websocket.app.state.pipeline
+        if pipeline is None:
+            await send(websocket, {"type": "error", "detail": "A partida precisa das bibliotecas do tracking."})
+            return
+        if kind == "create_match":
+            await asyncio.to_thread(pipeline.create_match, data.get("name"))
+        elif kind == "pause_match":
+            await asyncio.to_thread(pipeline.pause_match)
+        elif kind == "resume_match":
+            await asyncio.to_thread(pipeline.resume_match)
+        elif kind == "finish_match":
+            await asyncio.to_thread(pipeline.finish_match)
+        else:
+            pipeline.stats.set_name(data.get("name"))
+            await asyncio.to_thread(pipeline.refresh_stats)
+        pipeline.stats_sent = pipeline.stats_version
+        await broadcast(websocket.app, {"type": "stats", "stats": pipeline.latest_stats()})
+        if kind in ("create_match", "finish_match"):
+            await broadcast(websocket.app, {"type": "patterns", **pipeline.latest_patterns()})
 
     elif kind in ("event", "undo_event", "new_match"):
         pipeline = websocket.app.state.pipeline

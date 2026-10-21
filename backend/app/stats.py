@@ -139,6 +139,14 @@ class MatchStore:
             ).fetchall()
         return frames, plays, events
 
+    def load_positions(self, match_id: int) -> list[tuple]:
+        """Posições gravadas da partida: (t, id, time, papel, x, y, fantasma), na ordem."""
+        self.flush()
+        with self._lock:
+            return self._db.execute(
+                "SELECT t, pid, team, role, x, y, ghost FROM positions WHERE match_id = ? ORDER BY rowid", (match_id,)
+            ).fetchall()
+
     # ---- eventos (gravados na hora) ----
 
     def add_event(self, match_id: int, t: float, kind: str, team: int | None) -> int:
@@ -322,6 +330,7 @@ class StatsTracker:
         else:
             self.started = now
             self.match_id = self.store.new_match(now) if self.store else 0
+        self._load_lifecycle()
         self.last_wall: float | None = None
         self.prev_pos: dict[int, tuple[float, float, int, float]] = {}
         self.candidate: tuple[int | None, int] | None = None  # (pid, team)
@@ -343,6 +352,94 @@ class StatsTracker:
                 self.store.flush()
             self._start(now if now is not None else time.time(), resume=False)
 
+    # ---- ciclo da partida: criar, pausar, retomar, finalizar ----
+
+    def _load_lifecycle(self) -> None:
+        meta = (lambda key: self.store.get_meta(self.match_id, key)) if self.store else (lambda key: None)
+        # "livre": partida antiga, de antes do botão Criar partida (grava como sempre gravou).
+        self.state: str = meta("state") or "livre"
+        self.name: str | None = meta("name")
+        self.pause_total: float = float(meta("pause_total") or 0.0)
+        self.pause_started: float | None = meta("pause_started")
+        self.pauses: list[list[float]] = meta("pauses") or []
+        self.finished_at: float | None = meta("finished_at")
+
+    def _save_lifecycle(self) -> None:
+        if not self.store:
+            return
+        for key in ("state", "name", "pause_total", "pause_started", "pauses", "finished_at"):
+            self.store.set_meta(self.match_id, key, getattr(self, key))
+
+    def clock(self, now: float) -> float:
+        """Tempo de partida: desde o começo, sem contar as pausas."""
+        paused_now = now - self.pause_started if self.pause_started is not None else 0.0
+        end = self.finished_at if self.finished_at is not None else now
+        return max(0.0, min(now, end) - self.started - self.pause_total - paused_now)
+
+    def create_match(self, name: str | None, now: float | None = None) -> None:
+        """Partida nova criada pelo botão: começa ativa, com nome (ou as siglas do placar)."""
+        now = now if now is not None else time.time()
+        with self._lock:
+            if self.store:
+                self.store.flush()
+            self._start(now, resume=False)
+            self.state = "ativa"
+            self.name = (name or "").strip() or None
+            self._save_lifecycle()
+            self.version += 1
+
+    def pause(self, now: float | None = None) -> None:
+        now = now if now is not None else time.time()
+        with self._lock:
+            if self.state not in ("ativa", "livre"):
+                return
+            self.state = "pausada"
+            self.pause_started = now
+            self.last_wall = None
+            self._save_lifecycle()
+            self.version += 1
+
+    def resume(self, now: float | None = None) -> None:
+        now = now if now is not None else time.time()
+        with self._lock:
+            if self.state != "pausada":
+                return
+            if self.pause_started is not None:
+                at = self.clock(self.pause_started)
+                self.pauses.append([round(at, 1), round(now - self.pause_started, 1)])
+                self.pause_total += now - self.pause_started
+            self.pause_started = None
+            self.state = "ativa"
+            self._save_lifecycle()
+            self.version += 1
+
+    def finish(self, now: float | None = None) -> None:
+        now = now if now is not None else time.time()
+        with self._lock:
+            if self.state == "finalizada":
+                return
+            if self.pause_started is not None:
+                self.pauses.append([round(self.clock(self.pause_started), 1), round(now - self.pause_started, 1)])
+                self.pause_total += now - self.pause_started
+                self.pause_started = None
+            self.state = "finalizada"
+            self.finished_at = now
+            if self.store:
+                self.store.flush()
+            self._save_lifecycle()
+            self.version += 1
+
+    def set_name(self, name: str | None) -> None:
+        with self._lock:
+            self.name = (name or "").strip() or None
+            self._save_lifecycle()
+            self.version += 1
+
+    @property
+    def recording(self) -> bool:
+        """Grava só com a partida ativa (ou livre) e fora do intervalo marcado."""
+        return self.state in ("ativa", "livre") and not self.paused
+
     @property
     def paused(self) -> bool:
         """Durante o intervalo (número ímpar de marcações de intervalo), nada é gravado."""
@@ -356,7 +453,7 @@ class StatsTracker:
         if kind != "intervalo" and team not in (0, 1):
             raise ValueError("escolha o time do evento")
         with self._lock:
-            t = round((now if now is not None else time.time()) - self.started, 1)
+            t = round(self.clock(now if now is not None else time.time()), 1)
             team = team if kind != "intervalo" else None
             event_id = self.store.add_event(self.match_id, t, kind, team) if self.store else len(self.events) + 1
             event = {"id": event_id, "t": t, "kind": kind, "team": team}
@@ -378,10 +475,10 @@ class StatsTracker:
 
     def observe(self, field_map: dict[str, Any], team0_defends_left: bool | None, now: float) -> None:
         with self._lock:
-            if self.paused:
+            if not self.recording:
                 self.last_wall = None
                 return
-            t = now - self.started
+            t = self.clock(now)
             dt = 0.0 if self.last_wall is None else min(max(now - self.last_wall, 0.0), MAX_DT_S)
             self.last_wall = now
 
@@ -520,7 +617,13 @@ class StatsTracker:
             plays = list(self.plays)
             events = [dict(e) for e in self.events]
             started, match_id, paused = self.started, self.match_id, self.paused
-        elapsed = now - started
+            elapsed = self.clock(now)
+            lifecycle = {
+                "matchState": self.state,
+                "matchName": self.name,
+                "pauses": [list(p) for p in self.pauses],
+                "pausedSince": round(self.pause_started * 1000) if self.pause_started is not None else None,
+            }
         table = (
             np.array([[np.nan if v is None else v for v in row] for row in frames], dtype=np.float64)
             if frames
@@ -542,6 +645,7 @@ class StatsTracker:
                 "partida": window_stats(table, col, plays, -np.inf),
             },
             "timeline": timeline(table, col),
+            **lifecycle,
         }
 
 

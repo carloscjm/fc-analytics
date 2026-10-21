@@ -88,6 +88,21 @@ O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time e
 - **Limite:** a câmera da TV não mostra o campo inteiro, então as médias usam quem aparece na imagem (e quem saiu há até 2 s). É uma aproximação que melhora com mais minutos de jogo.
 - **Diagnóstico:** `localhost:8000/debug/patterns`.
 
+## Partida e relatório
+
+Os botões da partida ficam no cabeçalho do painel:
+
+1. **Criar partida:** dê um nome (ou deixe em branco para usar as siglas do placar) e escolha a pasta e o nome do arquivo do relatório. Tudo o que for capturado a partir daí vai para essa partida.
+2. **Escolher aba:** selecione a aba com o jogo.
+3. **Pausar captura / Retomar captura:** para o intervalo ou qualquer parada. Retoma de onde parou, quantas vezes for preciso; o tempo pausado não conta no relógio da partida. A cada pausa o relatório é gravado no arquivo escolhido.
+4. **Finalizar partida:** para a captura de vez e grava o relatório final. **Salvar relatório de novo** grava outra vez depois.
+
+O relatório é uma página HTML única (abre em qualquer navegador e imprime em PDF) com placar e eventos, estatísticas da partida, posse minuto a minuto, formação e posições médias de cada time atacando e defendendo, os passes e cruzamentos que mais se repetiram, a leitura tática, a movimentação e os alertas e análises do LLM. Se o navegador não deixar escolher o arquivo, ele vai para a pasta de downloads.
+
+Se o app reiniciar no meio da partida (uma atualização, por exemplo), os padrões dos times são refeitos a partir das posições gravadas.
+
+As cores dos times nos campinhos e no relatório são versões mais fortes das cores capturadas das camisas (um vermelho lavado na transmissão vira vermelho forte), para enxergar melhor no gramado.
+
 ## Movimentação (campinho abaixo do campo principal)
 
 Um segundo campo, só de leitura, mostra **como o time se movimenta** na opção escolhida em cima. As peças andam sozinhas, em loop, pelas três etapas da fase:

@@ -79,6 +79,31 @@ def is_wide_shot(people: list[Any], height: int) -> bool:
     return median_h <= WIDE_MAX_HEIGHT_RATIO * height
 
 
+def replay_patterns(
+    patterns: PatternStore,
+    positions: list[tuple],
+    ball_at: dict[float, tuple[float | None, float | None]],
+    started: float,
+) -> None:
+    """Alimenta os padrões com as posições gravadas, frame a frame (sem a área da câmera)."""
+    current: float | None = None
+    players: list[dict[str, Any]] = []
+
+    def emit() -> None:
+        if current is None or not players:
+            return
+        bx, by = ball_at.get(round(current, 2), (None, None))
+        ball = None if bx is None or by is None else {"x": bx, "y": by, "e": False}
+        patterns.observe({"players": players, "ball": ball}, current, None, now=started + current)
+
+    for t, pid, team, role, x, y, ghost in positions:
+        if t != current:
+            emit()
+            current, players = t, []
+        players.append({"id": pid, "t": team, "l": role, "x": x, "y": y, "g": bool(ghost), "age": 0.0})
+    emit()
+
+
 class Pipeline:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -108,7 +133,10 @@ class Pipeline:
         self.stats_sent = -1
         self.stats_next = 0.0
         self.stats_busy = False
+        self.replaying = False
         self.reset()
+        # Padrões ficam na memória: se o backend reiniciou no meio da partida, refaz a partir do que foi gravado.
+        threading.Thread(target=self.rebuild_patterns, daemon=True).start()
 
     def reset(self) -> None:
         if hasattr(self, "patterns"):
@@ -263,8 +291,9 @@ class Pipeline:
         if wide and self.team_names.source != "manual":
             self.name_reader.maybe_read(image, on_done=self._update_names)
         view_area = visible_area(view.h, width, height) if view is not None else None
-        if view is not None and view.fresh:
-            self.patterns.observe(snapshot, ts, view_area)
+        if view is not None and view.fresh and self.stats.recording:
+            if not self.replaying:
+                self.patterns.observe(snapshot, ts, view_area)
             self.stats.observe(snapshot, self.patterns.side.team0_defends_left(), time.time())
         self._maybe_summarize(ts)
         self._maybe_stats()
@@ -378,6 +407,7 @@ class Pipeline:
         summary["teamNames"] = self.team_labels()
         summary["teamNamesSource"] = self.team_names.source
         summary["storageBytes"] = self.storage_bytes()
+        summary["teamColors"] = self._match_colors()
         self.stats_latest = summary
         self.stats_version += 1
         try:
@@ -435,6 +465,53 @@ class Pipeline:
         self.patterns_latest = self.patterns.summary()
         self.patterns_version += 1
 
+    # ---------- ciclo da partida ----------
+
+    def create_match(self, name: str | None) -> None:
+        """Botão Criar partida: estatísticas, eventos, padrões, insights e nomes recomeçam."""
+        self.stats.create_match(name)
+        self.patterns.clear_overrides()
+        with self.names_lock:
+            self.team_names = TeamNames()
+            self.name_reader.reset()
+        self.reset_patterns()
+        self.refresh_stats()
+
+    def pause_match(self) -> None:
+        self.stats.pause()
+        self.refresh_stats()
+
+    def resume_match(self) -> None:
+        self.stats.resume()
+        self.refresh_stats()
+
+    def finish_match(self) -> None:
+        self.stats.finish()
+        self.patterns_latest = self.patterns.summary()
+        self.patterns_version += 1
+        self.refresh_stats()
+
+    def rebuild_patterns(self) -> None:
+        """Passa de novo pelas posições gravadas da partida atual para refazer os padrões (depois de reiniciar)."""
+        store = self.stats.store
+        if store is None:
+            return
+        try:
+            positions = store.load_positions(self.stats.match_id)
+            if not positions:
+                return
+            self.replaying = True
+            frames, _, _ = store.load(self.stats.match_id)
+            ball_at = {round(r[0], 2): (r[13], r[14]) for r in frames}
+            replay_patterns(self.patterns, positions, ball_at, self.stats.started)
+            self.patterns_latest = self.patterns.summary()
+            self.patterns_version += 1
+            log.info("padrões refeitos com %d posições gravadas", len(positions))
+        except Exception:  # noqa: BLE001
+            log.exception("falha ao refazer os padrões a partir do que foi gravado")
+        finally:
+            self.replaying = False
+
     def new_match(self) -> None:
         """Partida nova: estatísticas, eventos, padrões e nomes dos times recomeçam."""
         self.stats.new_match()
@@ -449,6 +526,31 @@ class Pipeline:
 
     def _team_colors(self) -> list[str] | None:
         return self.teams.info().get("colors")
+
+    def _match_colors(self) -> list[str] | None:
+        """Cores das camisas desta partida: as da calibração atual, guardadas para o relatório e para depois."""
+        colors = self._team_colors()
+        store = self.stats.store
+        key = (self.stats.match_id, tuple(colors) if colors else None)
+        if colors and store is not None and getattr(self, "_colors_saved", None) != key:
+            store.set_meta(self.stats.match_id, "colors", list(colors))
+            self._colors_saved = key
+        if colors:
+            return list(colors)
+        return store.get_meta(self.stats.match_id, "colors") if store is not None else None
+
+    def report_html(self, version: str) -> str:
+        """Relatório da partida atual (arquivo HTML único)."""
+        from .report import build_report
+
+        self.stats.flush()
+        stats = self.refresh_stats()
+        patterns = self.patterns.summary()
+        self.patterns_latest = patterns
+        self.patterns_version += 1
+        with self.insights._lock:
+            items = [dict(i) for i in self.insights.items]
+        return build_report(stats, patterns, items, stats.get("teamColors"), version)
 
     def _load_names(self) -> TeamNames:
         store = self.stats.store

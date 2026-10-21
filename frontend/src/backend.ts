@@ -233,6 +233,15 @@ export interface MatchStats {
   teamNamesSource?: "placar" | "manual" | null;
   /** espaço que o banco das partidas ocupa no disco */
   storageBytes?: number;
+  /** cores das camisas guardadas para esta partida */
+  teamColors?: [string, string] | null;
+  /** livre = partida antiga, sem o botão Criar partida */
+  matchState?: "livre" | "ativa" | "pausada" | "finalizada";
+  matchName?: string | null;
+  /** pausas da captura: [tempo de jogo em que pausou, duração], em segundos */
+  pauses?: [number, number][];
+  /** horário (ms) em que a pausa atual começou */
+  pausedSince?: number | null;
 }
 
 export interface InsightAnalysis {

@@ -337,7 +337,6 @@ export function MatchPanel({ stats, colors, send }: Props) {
   const [confirmWipe, setConfirmWipe] = useState(false);
   const storage = stats?.storageBytes;
   const [windowKey, setWindowKey] = useState<WindowKey>("recentes");
-  const [confirmNew, setConfirmNew] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const dark = useDarkMode();
 
@@ -367,12 +366,6 @@ export function MatchPanel({ stats, colors, send }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [send, paused]);
-
-  useEffect(() => {
-    if (!confirmNew) return;
-    const timer = window.setTimeout(() => setConfirmNew(false), 4000);
-    return () => window.clearTimeout(timer);
-  }, [confirmNew]);
 
   const theme = useMemo(() => chartTheme(), [dark]); // eslint-disable-line react-hooks/exhaustive-deps
   const possession = useMemo(() => (stats ? possessionOption(stats, theme) : null), [stats, theme]);
@@ -411,17 +404,6 @@ export function MatchPanel({ stats, colors, send }: Props) {
               Partida inteira
             </button>
           </div>
-          <button
-            className={`link ${confirmNew ? "danger" : ""}`}
-            onClick={() => {
-              if (!confirmNew) return setConfirmNew(true);
-              setConfirmNew(false);
-              send({ type: "new_match" });
-              setLastAction("Partida nova começada: estatísticas, eventos e padrões zerados.");
-            }}
-          >
-            {confirmNew ? "Clique de novo para zerar tudo" : "Nova partida"}
-          </button>
           <button className="link" onClick={() => setConfirmWipe(true)} disabled={confirmWipe}>
             Apagar dados{storage !== undefined ? ` (${formatBytes(storage)})` : ""}
           </button>

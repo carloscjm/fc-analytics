@@ -13,11 +13,22 @@ import {
   type StatusMessage,
 } from "./backend";
 import { chooseTab, FrameSender, type SenderCounters } from "./capture";
-import { DetectionOverlay, ROLE_COLORS, teamColors } from "./DetectionOverlay";
+import { DetectionOverlay, FALLBACK_TEAM_COLORS, ROLE_COLORS } from "./DetectionOverlay";
 import { InsightsPanel, type InsightCommand } from "./InsightsPanel";
 import { MatchPanel, formatBytes, type Command } from "./MatchPanel";
 import { TacticsPanel } from "./TacticsPanel";
 import { FlowPitch, type FlowLayer } from "./FlowPitch";
+import { MatchControls } from "./MatchControls";
+import { vivid } from "./colors";
+import {
+  ensureWritable,
+  fetchReport,
+  recallReportFile,
+  rememberReportFile,
+  reportFileName,
+  writeReport,
+  type ReportHandle,
+} from "./reportFile";
 import { PatternField3D, SECTOR_COLORS, type CameraMode, type FieldArrow, type FieldEnds, type PatternLayer } from "./PatternField3D";
 import { RollingStats, type LiveStats } from "./stats";
 
@@ -345,6 +356,22 @@ export default function App() {
   const stopRef = useRef(stopCapture);
   stopRef.current = stopCapture;
 
+  /** Começa (ou volta) a mandar frames de uma aba já escolhida. */
+  const startSending = useCallback(
+    (stream: MediaStream) => {
+      if (!video) return;
+      // Captura nova: tracking, times e bola recomeçam do zero no backend.
+      client.send({ type: "reset_session" });
+      const sender = new FrameSender(stream, video, (data) => client.sendBinary(data), intervalMs);
+      sender.setAutoCrop(autoCrop);
+      senderRef.current = sender;
+      statsRef.current.reset();
+      sender.start();
+      setCapturing(true);
+    },
+    [autoCrop, client, intervalMs, video],
+  );
+
   const startCapture = useCallback(async () => {
     if (!video) return;
     setNotice(null);
@@ -360,25 +387,114 @@ export default function App() {
     video.srcObject = stream;
     await video.play().catch(() => undefined);
     stream.getVideoTracks()[0]?.addEventListener("ended", () => stopCapture());
-
-    // Captura nova: tracking, times e bola recomeçam do zero no backend.
-    client.send({ type: "reset_session" });
-    const sender = new FrameSender(stream, video, (data) => client.sendBinary(data), intervalMs);
-    sender.setAutoCrop(autoCrop);
-    senderRef.current = sender;
-    statsRef.current.reset();
-    sender.start();
-    setCapturing(true);
-  }, [autoCrop, client, intervalMs, stopCapture, video]);
+    startSending(stream);
+  }, [startSending, stopCapture, video]);
 
   useEffect(() => () => senderRef.current?.stop(), []);
+
+  // ---------- partida: criar, pausar, retomar, finalizar e o arquivo do relatório ----------
+
+  const [reportHandle, setReportHandle] = useState<ReportHandle | null>(null);
+  const [matchBusy, setMatchBusy] = useState<string | null>(null);
+  const pendingHandle = useRef<{ handle: ReportHandle | null; fromMatch: number | null } | null>(null);
+  const matchId = matchStats?.matchId ?? null;
+  const matchState = matchStats?.matchState;
+
+  // Partida nova criada: o arquivo escolhido fica preso a ela. Página recarregada: lembra o arquivo.
+  useEffect(() => {
+    if (matchId === null) return;
+    const pending = pendingHandle.current;
+    if (pending && pending.fromMatch !== matchId && matchState === "ativa") {
+      pendingHandle.current = null;
+      setReportHandle(pending.handle);
+      if (pending.handle) void rememberReportFile(matchId, pending.handle);
+      return;
+    }
+    let alive = true;
+    void recallReportFile(matchId).then((handle) => {
+      if (alive) setReportHandle(handle);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [matchId, matchState]);
+
+  const reportTitle = matchStats?.matchName || `${(matchStats?.teamNames ?? ["Time A", "Time B"]).join(" x ")}`;
+
+  /** Grava o relatório. A permissão do arquivo é pedida antes de tudo, ainda dentro do clique. */
+  const saveReport = useCallback(
+    async (writable: boolean, what: string) => {
+      try {
+        const html = await fetchReport();
+        const where = await writeReport(reportHandle, writable, html, reportFileName(reportTitle));
+        setNotice(`${what} Relatório ${where}.`.trim());
+      } catch (err) {
+        setNotice(`${what} Não foi possível salvar o relatório: ${String(err)}`.trim());
+      }
+    },
+    [reportHandle, reportTitle],
+  );
+
+  const createMatch = useCallback(
+    (name: string, handle: ReportHandle | null) => {
+      pendingHandle.current = { handle, fromMatch: matchId };
+      setReportHandle(null);
+      client.send({ type: "create_match", name });
+      setNotice(
+        capturing
+          ? "Partida criada. A captura continua nesta aba."
+          : "Partida criada. Agora clique em Escolher aba e selecione a aba com o jogo.",
+      );
+    },
+    [capturing, client, matchId],
+  );
+
+  const pauseMatch = useCallback(async () => {
+    const writable = await ensureWritable(reportHandle);
+    senderRef.current?.stop();
+    senderRef.current = null;
+    client.send({ type: "pause_match" });
+    if (reportHandle) await saveReport(writable, "Captura pausada.");
+    else setNotice("Captura pausada. Clique em Retomar captura para continuar de onde parou.");
+  }, [client, reportHandle, saveReport]);
+
+  const resumeMatch = useCallback(async () => {
+    client.send({ type: "resume_match" });
+    setNotice(null);
+    const stream = streamRef.current;
+    if (stream && stream.getVideoTracks()[0]?.readyState === "live") startSending(stream);
+    else await startCapture();
+  }, [client, startCapture, startSending]);
+
+  const finishMatch = useCallback(async () => {
+    const writable = await ensureWritable(reportHandle);
+    setMatchBusy("Fechando o relatório...");
+    stopCapture();
+    client.send({ type: "finish_match" });
+    // O backend grava o fim da partida antes de montar o relatório.
+    await new Promise((r) => window.setTimeout(r, 800));
+    await saveReport(writable, "Partida finalizada.");
+    setMatchBusy(null);
+  }, [client, reportHandle, saveReport, stopCapture]);
+
+  const exportAgain = useCallback(async () => {
+    const writable = await ensureWritable(reportHandle);
+    setMatchBusy("Salvando o relatório...");
+    await saveReport(writable, "");
+    setMatchBusy(null);
+  }, [reportHandle, saveReport]);
 
   const changeInterval = (ms: number) => {
     setIntervalMs(ms);
     senderRef.current?.setInterval(ms);
   };
 
-  const colors = teamColors(result);
+  // Cores dos times: as da calibração (ou as guardadas na partida), mais fortes para enxergar bem nos campinhos.
+  const rawColors = result?.teams?.colors ?? matchStats?.teamColors ?? FALLBACK_TEAM_COLORS;
+  const colors: [string, string] = useMemo(
+    () => [vivid(rawColors[0]), vivid(rawColors[1])],
+    [rawColors[0], rawColors[1]], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const counts = useMemo(() => {
     const out = new Map<string, { n: number; color: string }>();
     for (const box of result?.boxes ?? []) {
@@ -686,15 +802,20 @@ export default function App() {
           <p className="subtitle">Padrões de ataque e defesa</p>
         </div>
         <div className="controls">
-          {capturing ? (
-            <button className="btn" onClick={stopCapture}>
-              Parar captura
-            </button>
-          ) : (
-            <button className="btn primary" onClick={startCapture} disabled={conn !== "conectado"}>
-              Escolher aba
-            </button>
-          )}
+          <MatchControls
+            stats={matchStats}
+            names={names}
+            capturing={capturing}
+            connected={conn === "conectado"}
+            reportHandle={reportHandle}
+            busy={matchBusy}
+            onCreate={createMatch}
+            onStart={() => void startCapture()}
+            onPause={() => void pauseMatch()}
+            onResume={() => void resumeMatch()}
+            onFinish={() => void finishMatch()}
+            onExport={() => void exportAgain()}
+          />
           <label>
             Intervalo
             <select value={intervalMs} onChange={(e) => changeInterval(Number(e.target.value))}>
@@ -774,7 +895,10 @@ export default function App() {
           />
           {!capturing && (
             <div className="placeholder">
-              <p>Clique em <strong>Escolher aba</strong> e selecione a aba com o jogo.</p>
+              <p>
+                Clique em <strong>Criar partida</strong> e depois em <strong>Escolher aba</strong> para selecionar a aba
+                com o jogo.
+              </p>
               <p className="small">
                 Dica: abra esta página numa janela separada, ao lado do jogo. Assim você vê as caixas enquanto assiste.
               </p>
