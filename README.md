@@ -2,7 +2,7 @@
 
 Analisador de futebol ao vivo que roda 100% no seu PC. Ele captura a aba do navegador com o jogo, detecta jogadores e bola, projeta tudo num mapa 3D visto de cima e gera estatísticas e insights em tempo real, sem nenhum serviço pago.
 
-**Status:** Fase 3 (campo e padrões dos times). O app identifica o campo na imagem, converte as posições para metros e mostra, num campo 3D, como cada time ataca e como defende: formação, posições médias, linha de defesa, largura, profundidade, corredor preferido e mapa de calor.
+**Status:** Fase 4 (estatísticas). Além dos padrões de ataque e defesa no campo 3D, o app grava a partida num banco local e mostra estatísticas dos últimos 5 minutos e da partida inteira, com gráficos e marcação de gols, cartões, substituições e intervalo pelo teclado.
 
 ## Estrutura
 
@@ -73,6 +73,25 @@ O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time e
 - **Limite:** a câmera da TV não mostra o campo inteiro, então as médias usam quem aparece na imagem (e quem saiu há até 2 s). É uma aproximação que melhora com mais minutos de jogo.
 - **Diagnóstico:** `localhost:8000/debug/patterns`.
 
+## Estatísticas da partida (Fase 4)
+
+- **Gravação:** cada momento de jogo em tomada aberta vai para `backend/data/partidas.sqlite` (posições de todos os jogadores, bola, medidas do momento, passes, perdas e eventos). Se o backend reiniciar, a partida continua de onde parou. Depois de 4 horas sem jogo, começa uma partida nova sozinha; o botão **Nova partida** zera na hora (estatísticas, eventos e padrões).
+- **Janelas:** **Últimos 5 min** e **Partida inteira**, recalculadas a cada 3 s.
+- **Métricas:** posse de bola (time do jogador mais perto da bola, até 4 m), domínio territorial (tempo com a bola no terço ofensivo), passes aproximados e precisão (bola trocando entre jogadores do mesmo time), perdas de bola, pressão pós-perda (jogadores a até 5 m da bola nos 5 s seguintes e quantas vezes recupera), altura da linha de defesa, compactação, largura, corredor da bola no ataque e distância percorrida por quem aparece na imagem.
+- **Gráficos (ECharts):** posse por minuto e altura da linha de defesa por minuto, com os eventos marcados.
+- **Atalhos de teclado** (com a página do FC Analytics em foco):
+
+  | Tecla | Time A | Com Shift: Time B |
+  | --- | --- | --- |
+  | G | gol | gol |
+  | C | cartão amarelo | cartão amarelo |
+  | V | cartão vermelho | cartão vermelho |
+  | S | substituição | substituição |
+
+  **I** marca o intervalo (a coleta pausa) e, apertado de novo, o começo do 2º tempo. **Z** desfaz o último evento. Os mesmos eventos têm botões no painel.
+- **Limites:** o relógio é o do app (começa quando a partida começa no app, não o do jogo). Passes, pressão e distância dependem do que aparece na imagem e são aproximados; a distância fica bem abaixo da real.
+- **Diagnóstico:** `localhost:8000/debug/stats`.
+
 ## Modelo de futebol (opcional)
 
 No painel, **Baixar modelo de futebol** baixa o `football-player-detection.pt` (YOLOv8x, cerca de 130 MB) do Google Drive indicado no `examples/soccer/setup.sh` do projeto [roboflow/sports](https://github.com/roboflow/sports). Ele detecta `player`, `goalkeeper`, `referee` e `ball`. É gratuito e segue a licença AGPL-3.0 da Ultralytics.
@@ -110,6 +129,7 @@ Componentes e licenças conferidos em 20/10/2026:
 | React, Vite, Three.js | MIT |
 | Modelo de pontos do campo (roboflow/sports, YOLOv8 pose) | AGPL-3.0 |
 | Apache ECharts | Apache 2.0 |
+| SQLite | domínio público |
 | Ollama | MIT |
 | Qwen3 (pesos) | Apache 2.0 |
 

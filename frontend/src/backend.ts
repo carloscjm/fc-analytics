@@ -86,6 +86,52 @@ export interface PatternsInfo {
   team0DefendsLeft: boolean | null;
 }
 
+export type Pair<T> = [T, T];
+
+export type MatchEventKind = "gol" | "amarelo" | "vermelho" | "substituicao" | "intervalo";
+
+/** Evento marcado à mão (atalho de teclado ou botão). `t` = segundos desde o começo da partida no app. */
+export interface MatchEvent {
+  id: number;
+  t: number;
+  kind: MatchEventKind;
+  team: 0 | 1 | null;
+}
+
+/** Métricas de uma janela (últimos 5 min ou partida inteira). Índice 0 = Time A, 1 = Time B. */
+export interface WindowStats {
+  seconds: number;
+  possession: Pair<number> | null;
+  possessionCoverage: number | null;
+  tilt: Pair<number> | null;
+  line: Pair<number | null>;
+  depth: Pair<number | null>;
+  width: Pair<number | null>;
+  corridors: Pair<number[] | null>;
+  passes: Pair<number>;
+  losses: Pair<number>;
+  passAccuracy: Pair<number | null>;
+  pressure: Pair<number | null>;
+  recoveries5s: Pair<number | null>;
+  distanceKm: Pair<number>;
+}
+
+export interface MatchStats {
+  matchId: number;
+  startedAt: number;
+  elapsedS: number;
+  paused: boolean;
+  period: 1 | 2;
+  score: Pair<number>;
+  events: MatchEvent[];
+  windows: { recentes: WindowStats; partida: WindowStats };
+  timeline: {
+    minutes: number[];
+    possession: (Pair<number> | null)[];
+    line: Pair<(number | null)[]>;
+  };
+}
+
 export interface TrackingInfo {
   active: number;
   cutsLastMinute?: number;
@@ -112,6 +158,7 @@ export interface DetectionsMessage {
   tracking?: TrackingInfo;
   map?: MapInfo | null;
   patterns?: PatternsInfo | null;
+  stats?: MatchStats | null;
   error?: string;
 }
 
@@ -127,6 +174,7 @@ export interface StatusMessage {
   footballModel: boolean;
   pitch?: { state: "ausente" | "carregando" | "baixando" | "pronto" | "erro" | "indisponível"; error: string | null };
   patterns?: PatternsInfo;
+  stats?: MatchStats;
 }
 
 export interface BenchmarkRow {
@@ -154,6 +202,7 @@ export type ServerMessage =
   | DetectionsMessage
   | StatusMessage
   | ({ type: "patterns" } & PatternsInfo)
+  | { type: "stats"; stats: MatchStats }
   | BenchmarkMessage;
 
 export const WS_URL: string =

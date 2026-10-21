@@ -195,3 +195,22 @@ def test_debug_endpoints_show_last_frame(client):
     snap = client.get("/debug/snapshot.jpg")
     assert snap.status_code == 200 and snap.content[:2] == b"\xff\xd8"
     ws.__exit__(None, None, None)
+
+
+def test_match_events_are_broadcast(client):
+    ws, conn, status = open_ws(client)
+    assert status["stats"]["score"] == [0, 0] or "matchId" in status["stats"]
+    conn.send_json({"type": "new_match"})
+    message = conn.receive_json()
+    assert message["type"] == "stats" and message["stats"]["score"] == [0, 0]
+    assert conn.receive_json()["type"] == "patterns"
+    conn.send_json({"type": "event", "kind": "gol", "team": 1})
+    message = conn.receive_json()
+    assert message["stats"]["score"] == [0, 1]
+    assert message["stats"]["events"][-1]["kind"] == "gol"
+    conn.send_json({"type": "event", "kind": "gol"})
+    assert conn.receive_json()["type"] == "error"
+    conn.send_json({"type": "undo_event"})
+    assert conn.receive_json()["stats"]["score"] == [0, 0]
+    assert client.get("/debug/stats").json()["ready"] is True
+    ws.__exit__(None, None, None)

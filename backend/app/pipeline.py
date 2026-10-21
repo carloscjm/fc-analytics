@@ -14,6 +14,7 @@ relógio do navegador volta para trás (página recarregada), tudo recomeça.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import deque
@@ -24,9 +25,12 @@ import numpy as np
 
 from .ball import BallTracker
 from .patterns import PatternStore
+from .stats import MatchStore, StatsTracker
 from .fieldmap import FieldMap
 from .pitch import LAST_FIT, CutDetector, HomographyTracker, Keypoints, is_close_up, visible_area
 from .teams import OUTLIER, TeamClassifier, jersey_feature
+
+log = logging.getLogger("fc-analytics")
 
 PERSON_LABELS = {"pessoa", "jogador", "goleiro", "árbitro"}
 TRACK_ENDED_AFTER_S = 3.0
@@ -83,6 +87,18 @@ class Pipeline:
         self.patterns_latest: dict[str, Any] | None = None
         self.patterns_next_ts = 0.0
         self.patterns_busy = False
+        # Estatísticas da partida (Fase 4): gravadas no SQLite e retomadas se o backend reiniciar.
+        try:
+            store = MatchStore.open_default()
+        except Exception:  # noqa: BLE001
+            log.exception("SQLite indisponível; as estatísticas ficam só na memória")
+            store = None
+        self.stats = StatsTracker(store)
+        self.stats_latest: dict[str, Any] | None = None
+        self.stats_version = 0
+        self.stats_sent = -1
+        self.stats_next = 0.0
+        self.stats_busy = False
         self.reset()
 
     def reset(self) -> None:
@@ -230,7 +246,9 @@ class Pipeline:
         snapshot = self.map.snapshot(ts)
         if view is not None and view.fresh:
             self.patterns.observe(snapshot, ts)
+            self.stats.observe(snapshot, self.patterns.side.team0_defends_left(), time.time())
         self._maybe_summarize(ts)
+        self._maybe_stats()
         field = {
             **snapshot,
             "keypoints": int((keypoints.conf >= 0.5).sum()) if keypoints is not None else 0,
@@ -255,7 +273,11 @@ class Pipeline:
         patterns = None
         if self.patterns_version != self.patterns_sent:
             patterns, self.patterns_sent = self.patterns_latest, self.patterns_version
+        stats = None
+        if self.stats_version != self.stats_sent:
+            stats, self.stats_sent = self.stats_latest, self.stats_version
         return {
+            "stats": stats,
             "boxes": tracked_boxes,
             "map": field,
             "patterns": patterns,
@@ -307,6 +329,39 @@ class Pipeline:
         self.patterns.reset()
         self.patterns_latest = self.patterns.summary()
         self.patterns_version += 1
+
+    # ---------- estatísticas da partida (recalculadas em segundo plano a cada 3 s) ----------
+
+    def _maybe_stats(self) -> None:
+        now = time.monotonic()
+        if self.stats_busy or now < self.stats_next:
+            return
+        self.stats_next = now + 3.0
+        self.stats_busy = True
+
+        def work() -> None:
+            try:
+                self.refresh_stats()
+            except Exception:  # noqa: BLE001
+                log.exception("falha ao calcular as estatísticas")
+            finally:
+                self.stats_busy = False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def refresh_stats(self) -> dict[str, Any]:
+        self.stats_latest = self.stats.summary()
+        self.stats_version += 1
+        return self.stats_latest
+
+    def latest_stats(self) -> dict[str, Any]:
+        return self.stats_latest if self.stats_latest is not None else self.refresh_stats()
+
+    def new_match(self) -> None:
+        """Partida nova: estatísticas, eventos e padrões dos times recomeçam."""
+        self.stats.new_match()
+        self.reset_patterns()
+        self.refresh_stats()
 
     def recalibrate_teams(self) -> None:
         with self._lock:

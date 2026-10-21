@@ -23,7 +23,7 @@ from .protocol import FrameFormatError, parse_frame
 
 FOOTBALL_MODEL = "football-player-detection.pt"
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 log = logging.getLogger("fc-analytics")
 
 
@@ -268,6 +268,14 @@ def debug_snapshot() -> Response:
     return Response(content=buf.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/debug/stats")
+def debug_stats() -> dict:
+    pipeline = getattr(app.state, "pipeline", None)
+    if pipeline is None:
+        return {"ready": False}
+    return {"ready": True, **pipeline.latest_stats()}
+
+
 @app.get("/debug/patterns")
 def debug_patterns() -> dict:
     pipeline = getattr(app.state, "pipeline", None)
@@ -360,6 +368,8 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     first_status = status_message(detector)
     if pipeline is not None and pipeline.latest_patterns() is not None:
         first_status["patterns"] = pipeline.latest_patterns()
+    if pipeline is not None:
+        first_status["stats"] = await asyncio.to_thread(pipeline.latest_stats)
     await send(websocket, first_status)
 
     recent_frames: deque[np.ndarray] = websocket.app.state.recent_frames
@@ -449,6 +459,7 @@ async def handle_frame(
             "wide": tracked.get("wide"),
             "map": tracked.get("map"),
             "patterns": tracked.get("patterns"),
+            "stats": tracked.get("stats"),
         }
     websocket.app.state.last_frame = (image, message, time.time())
     websocket.app.state.result_times.append(time.time())
@@ -505,6 +516,28 @@ async def handle_command(
         if websocket.app.state.pipeline is not None:
             websocket.app.state.pipeline.reset_patterns()
             await broadcast(websocket.app, {"type": "patterns", **websocket.app.state.pipeline.latest_patterns()})
+
+    elif kind in ("event", "undo_event", "new_match"):
+        pipeline = websocket.app.state.pipeline
+        if pipeline is None:
+            await send(websocket, {"type": "error", "detail": "As estatísticas precisam das bibliotecas do tracking."})
+            return
+        try:
+            if kind == "event":
+                team = data.get("team")
+                pipeline.stats.add_event(str(data.get("kind")), int(team) if team is not None else None)
+            elif kind == "undo_event":
+                pipeline.stats.undo_event()
+            else:
+                await asyncio.to_thread(pipeline.new_match)
+        except ValueError as exc:
+            await send(websocket, {"type": "error", "detail": str(exc)})
+            return
+        stats = await asyncio.to_thread(pipeline.refresh_stats)
+        pipeline.stats_sent = pipeline.stats_version
+        await broadcast(websocket.app, {"type": "stats", "stats": stats})
+        if kind == "new_match":
+            await broadcast(websocket.app, {"type": "patterns", **pipeline.latest_patterns()})
 
     elif kind == "recalibrate_teams":
         if websocket.app.state.pipeline is not None:
