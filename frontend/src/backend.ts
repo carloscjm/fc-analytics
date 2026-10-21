@@ -134,6 +134,32 @@ export interface TeamTactics {
   changes: string[];
 }
 
+/** Uma posição numa etapa da fase. */
+export interface FlowRole {
+  x: number;
+  y: number;
+  name: string;
+  line: number;
+  /** poucos dados nesta etapa (a câmera quase não mostrou essa posição) */
+  estimated: boolean;
+}
+
+/** Etapa da fase: saída / progressão / chegada (ataque) ou pressão alta / bloco médio / bloco baixo (defesa). */
+export interface FlowStage {
+  name: string;
+  /** altura média do time, em metros a partir do próprio gol */
+  height: number;
+  frames: number;
+  roles: FlowRole[];
+}
+
+/** Como o time se movimenta dentro de uma fase: as 10 posições em três etapas. */
+export interface TeamFlow {
+  phase: "ataque" | "defesa";
+  stages: FlowStage[];
+  notes: string[];
+}
+
 export interface PatternsInfo {
   options: Record<string, PatternOption>;
   phaseSource: { bola: number; "avanço": number; "sem fase": number };
@@ -144,6 +170,8 @@ export interface PatternsInfo {
   tactics?: Record<string, TeamTactics>;
   /** defesa → ataque de cada time ("0" e "1") */
   transitions?: Record<string, PatternTransition | null>;
+  /** movimentação dentro de cada fase ("0-ataque", "1-defesa"...) */
+  flows?: Record<string, TeamFlow | null>;
 }
 
 export type Pair<T> = [T, T];

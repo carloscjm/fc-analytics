@@ -31,6 +31,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .flows import team_flow
 from .pitch import LENGTH, WIDTH
 from .tactics import (
     RECENT_S,
@@ -54,6 +55,7 @@ MIN_PLAYERS_PER_FRAME = 5
 GHOST_MAX_AGE_S = 2.0
 MAX_FRAMES = 12000  # cerca de 30 min de jogo ao vivo por fase
 MIN_FRAMES_FOR_PATTERN = 40
+FLOW_EVERY_FRAMES = 200
 ROLES = 10
 SIDE_HALF_LIFE_S = 120.0
 HEAT_CELL_M = 5.0
@@ -400,6 +402,7 @@ class PatternStore:
             self.plays = BallPlays()
             self.by_ball = False
             self.cached: dict[str, Any] | None = None
+            self.flow_cache: dict[tuple[int, str], tuple[Any, dict[str, Any] | None]] = {}
             # Formações escolhidas à mão continuam depois de "Zerar padrões" (são decisão de quem assiste).
             if not hasattr(self, "overrides"):
                 self.overrides: dict[tuple[int, str], tuple[int, ...]] = {}
@@ -480,6 +483,19 @@ class PatternStore:
                             label = classify_build_up(members)
                             if label:
                                 self.build_ups[t].append((wall, label))
+
+    def _flow(self, t: int, phase: str, frames: dict, out: dict[str, Any]) -> dict[str, Any] | None:
+        """Movimentação da fase, refeita a cada 200 momentos novos ou quando a formação muda (é mais pesada)."""
+        f = frames[(t, phase)]
+        pattern = out["options"][f"{t}-{phase}"]["pattern"]
+        names = tuple(r.get("name") for r in pattern["roles"]) if pattern else None
+        key = (len(f) // FLOW_EVERY_FRAMES, pattern["formation"] if pattern else None, names)
+        cached = self.flow_cache.get((t, phase))
+        if cached and cached[0] == key:
+            return cached[1]
+        flow = team_flow(f, pattern, phase)
+        self.flow_cache[(t, phase)] = (key, flow)
+        return flow
 
     def _update_side(self, players: list[dict[str, Any]], ts: float) -> None:
         evidence = 0.0
@@ -577,6 +593,8 @@ class PatternStore:
             str(t): transition(out["options"][f"{t}-defesa"]["pattern"], out["options"][f"{t}-ataque"]["pattern"])
             for t in (0, 1)
         }
+        # Depois das transições: no ataque as posições já levam o nome da defesa.
+        out["flows"] = {f"{t}-{phase}": self._flow(t, phase, frames, out) for t in (0, 1) for phase in PHASES}
         out["tactics"] = {
             str(t): team_tactics(t, out, frames, walls, back_raw, build_ups[t], events, now - RECENT_S) for t in (0, 1)
         }

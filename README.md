@@ -88,6 +88,16 @@ O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time e
 - **Limite:** a câmera da TV não mostra o campo inteiro, então as médias usam quem aparece na imagem (e quem saiu há até 2 s). É uma aproximação que melhora com mais minutos de jogo.
 - **Diagnóstico:** `localhost:8000/debug/patterns`.
 
+## Movimentação (campinho abaixo do campo principal)
+
+Um segundo campo, só de leitura, mostra **como o time se movimenta** na opção escolhida em cima:
+
+- **Ataque:** os momentos em que o time tem a bola são divididos em três etapas pela altura do time no campo: **saída de bola** → **progressão** → **chegada**. Cada posição vira um caminho: anel no começo, ponto no meio e o jogador com o nome no fim. Dá para ver o lateral que sobe e fecha para o meio, o volante que cai entre os zagueiros na saída, o ponta que abre. Em amarelo, as jogadas com a bola da partida: cruzamentos por lado, entradas na área e chutes de fora.
+- **Defesa:** **pressão alta** → **bloco médio** → **bloco baixo**: como a formação se recompõe, quem entra na última linha (linha de 5) e quem fica adiantado.
+- **Duas opções juntas** (A ataca × B defende) mostram os dois times; **defesa → ataque** mostra como o time ataca.
+- Embaixo, frases curtas: quantos ficam na última linha em cada etapa, quanto o time sobe ou recua e as posições que mais se destacam.
+- Precisa de pelo menos 90 momentos da fase. Posições que a câmera quase não mostrou numa etapa aparecem apagadas e tracejadas.
+
 ## Quem é quem e nomes dos times
 
 - **Nomes dos times:** o app lê o placar da transmissão com um leitor de texto local (RapidOCR, Apache 2.0, roda na CPU) e usa as siglas, como MCI e PSG, em toda a página, nos alertas e na análise do LLM. Ele procura duas siglas lado a lado (com o placar no meio) ou uma embaixo da outra, e só confirma depois de ler o mesmo par 3 vezes. A sigla fica presa à cor da camisa; se ficar na cor errada, use **⇄ Trocar** no placar do painel. **Editar** permite digitar os nomes (aí o placar não muda mais); **Ler do placar** volta ao automático.

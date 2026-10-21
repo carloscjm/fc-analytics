@@ -17,10 +17,13 @@ import { DetectionOverlay, ROLE_COLORS, teamColors } from "./DetectionOverlay";
 import { InsightsPanel, type InsightCommand } from "./InsightsPanel";
 import { MatchPanel, formatBytes, type Command } from "./MatchPanel";
 import { TacticsPanel } from "./TacticsPanel";
+import { FlowPitch, type FlowLayer } from "./FlowPitch";
 import { PatternField3D, SECTOR_COLORS, type CameraMode, type FieldArrow, type FieldEnds, type PatternLayer } from "./PatternField3D";
 import { RollingStats, type LiveStats } from "./stats";
 
 const INTERVALS = [100, 125, 150, 175, 200];
+/** Momentos que uma fase precisa para o campinho de movimentação (três etapas de 30, igual ao backend). */
+const FLOW_MIN_FRAMES = 90;
 const EMPTY_STATS: LiveStats = { fps: 0, latencyMeanMs: null, latencyP95Ms: null, inferMs: null, serverMs: null };
 const EMPTY_COUNTERS: SenderCounters = { sent: 0, skipped: 0, lost: 0 };
 interface ViewPart {
@@ -435,6 +438,93 @@ export default function App() {
   const sourceTotal = source ? source.bola + source["avanço"] + source["sem fase"] : 0;
   const pct = (v: number) => (sourceTotal ? Math.round((100 * v) / sourceTotal) : 0);
 
+  // Campinho de movimentação: as partes da opção escolhida (na defesa → ataque, só o ataque).
+  const flowParts = view.parts
+    .filter((part) => !part.ghost)
+    .map((part) => ({ part, flow: patterns?.flows?.[part.option] ?? null, option: patterns?.options[part.option] ?? null }));
+  const flowLayers: FlowLayer[] = flowParts.map(({ part, flow }) => ({
+    flow,
+    color: colors[part.team],
+    mirror: part.mirror,
+    name: names[part.team],
+    plays: part.option.endsWith("ataque") ? (patterns?.tactics?.[String(part.team)]?.plays.partida ?? null) : null,
+  }));
+  const flowMissing = flowParts.filter(({ flow }) => !flow);
+  const flowCard = (
+    <section className="card flow-card">
+      <div className="map-head">
+        <h2>Movimentação: {view.transition !== undefined ? `como o ${names[view.transition]} ataca` : view.title}</h2>
+      </div>
+      <div className="flow-wrap">
+        <FlowPitch layers={flowLayers} />
+        {flowMissing.length > 0 && (
+          <div className="map-empty">
+            {flowMissing.map(({ part, option }) => (
+              <p key={part.option}>
+                Coletando: {option?.frames ?? 0} de {FLOW_MIN_FRAMES} momentos com o {teamName(part.team)}{" "}
+                {part.option.endsWith("ataque") ? "atacando" : "defendendo"}.
+              </p>
+            ))}
+            <p className="small">A movimentação aparece quando a fase tem momentos suficientes para dividir em três etapas.</p>
+          </div>
+        )}
+      </div>
+      <div className="flow-legend muted small">
+        <span>
+          <svg viewBox="0 0 10 10" className="flow-key"><circle cx="5" cy="5" r="3.4" fill="none" stroke="currentColor" strokeWidth="1.2" /></svg>
+          início da fase
+        </span>
+        <span>
+          <svg viewBox="0 0 10 10" className="flow-key"><circle cx="5" cy="5" r="1.6" fill="currentColor" /></svg>
+          meio
+        </span>
+        <span>
+          <svg viewBox="0 0 10 10" className="flow-key"><circle cx="5" cy="5" r="4" fill="currentColor" /></svg>
+          fim (com o nome da posição)
+        </span>
+        <span>
+          <span className="bar dashed" /> linha da formação no início{flowParts.length > 1 ? " (só com um time)" : ""}
+        </span>
+        <span>
+          <span className="bar ball" /> jogadas com a bola na partida
+        </span>
+      </div>
+      <div className={flowParts.length > 1 ? "stats-duo" : ""}>
+        {flowParts.map(({ part, flow }) =>
+          flow ? (
+            <div key={part.option} className="flow-notes">
+              <p className="stats-heading">
+                <span className="swatch" style={{ background: colors[part.team] }} />
+                {teamName(part.team)} {part.option.endsWith("ataque") ? "atacando" : "defendendo"}
+              </p>
+              <ol className="flow-stages">
+                {flow.stages.map((stage) => (
+                  <li key={stage.name}>
+                    <strong>{stage.name}</strong>
+                    <span className="muted small">
+                      time a {Math.round(stage.height)} m do próprio gol · {stage.frames} momentos
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              <ul className="highlights">
+                {flow.notes.map((note, i) => (
+                  <li key={i}>{note}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null,
+        )}
+      </div>
+      <p className="muted small map-foot">
+        Os momentos de cada fase são divididos em três etapas pela altura do time no campo
+        {flowParts.some(({ part }) => part.option.endsWith("defesa")) ? " (na defesa: da pressão alta ao bloco baixo)" : ""}, e
+        cada posição é seguida de uma etapa para a outra. Linhas tracejadas e jogadores apagados são posições que a câmera
+        quase não mostrou naquela etapa. Mesmo sentido do campo de cima: o ataque vai da esquerda para a direita.
+      </p>
+    </section>
+  );
+
   const patternCard = (
     <section className="card map-card">
       <div className="map-head">
@@ -669,6 +759,7 @@ export default function App() {
       <main className={`layout ${insightsWide ? "wide-insights" : ""}`}>
         <div className="main-col">
         {patternCard}
+        {flowCard}
         <TacticsPanel tactics={patterns?.tactics} names={names} colors={colors} />
         <MatchPanel stats={matchStats} colors={colors} send={sendCommand} />
         <section className="stage">
