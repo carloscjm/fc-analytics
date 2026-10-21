@@ -132,6 +132,88 @@ function heatTexture(pattern: TeamPattern, color: string, mirror: boolean): THRE
   return texture;
 }
 
+// ---------------------------------------------------------------------------
+// Jogador em 3D feito de formas simples: cabeça, tronco com camisa, braços,
+// calção, pernas, meiões e chuteiras. Fica de frente para o gol que ataca (+x).
+// ---------------------------------------------------------------------------
+
+// Bem maior que o real (1,8 m), para dar para ver cada jogador com o campo inteiro na tela.
+// Visto de cima o jogador mostra só cabeça e ombros, então ele cresce um pouco mais.
+const PLAYER_SCALE: Record<CameraMode, number> = { top: 3.4, "3d": 2.6 };
+const SKIN = "#c99a74";
+const HAIR = "#2b211c";
+const BOOT = "#151515";
+
+interface PlayerFigure {
+  group: THREE.Group;
+  jersey: THREE.MeshStandardMaterial;
+  shorts: THREE.MeshStandardMaterial;
+  socks: THREE.MeshStandardMaterial;
+}
+
+const geometryCache: Record<string, THREE.BufferGeometry> = {};
+function geo(key: string, make: () => THREE.BufferGeometry): THREE.BufferGeometry {
+  return (geometryCache[key] ??= make());
+}
+
+const sharedMaterials = {
+  skin: new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.7 }),
+  hair: new THREE.MeshStandardMaterial({ color: HAIR, roughness: 0.9 }),
+  boot: new THREE.MeshStandardMaterial({ color: BOOT, roughness: 0.5 }),
+};
+
+function makePlayer(): PlayerFigure {
+  const jersey = new THREE.MeshStandardMaterial({ roughness: 0.6 });
+  const shorts = new THREE.MeshStandardMaterial({ roughness: 0.6 });
+  const socks = new THREE.MeshStandardMaterial({ roughness: 0.7 });
+  const group = new THREE.Group();
+  const add = (mesh: THREE.Mesh, x: number, y: number, z: number, rz = 0, rx = 0) => {
+    mesh.position.set(x, y, z);
+    mesh.rotation.z = rz;
+    mesh.rotation.x = rx;
+    group.add(mesh);
+    return mesh;
+  };
+
+  // Pernas (coxa e canela), meiões e chuteiras.
+  for (const side of [-1, 1]) {
+    const z = side * 0.11;
+    add(new THREE.Mesh(geo("thigh", () => new THREE.CapsuleGeometry(0.075, 0.32, 4, 10)), sharedMaterials.skin), 0, 0.72, z);
+    add(new THREE.Mesh(geo("shin", () => new THREE.CapsuleGeometry(0.06, 0.3, 4, 10)), socks), 0, 0.32, z);
+    add(new THREE.Mesh(geo("boot", () => new THREE.BoxGeometry(0.26, 0.08, 0.11)), sharedMaterials.boot), 0.06, 0.05, z);
+  }
+  // Calção e camisa.
+  add(new THREE.Mesh(geo("shorts", () => new THREE.CylinderGeometry(0.2, 0.23, 0.24, 14)), shorts), 0, 0.93, 0);
+  add(new THREE.Mesh(geo("torso", () => new THREE.CapsuleGeometry(0.19, 0.38, 6, 14)), jersey), 0, 1.3, 0);
+  // Ombros e braços (manga na cor da camisa, antebraço de pele).
+  for (const side of [-1, 1]) {
+    const z = side * 0.27;
+    add(new THREE.Mesh(geo("sleeve", () => new THREE.CapsuleGeometry(0.065, 0.16, 4, 10)), jersey), 0, 1.44, z, 0, side * 0.18);
+    add(new THREE.Mesh(geo("forearm", () => new THREE.CapsuleGeometry(0.05, 0.26, 4, 10)), sharedMaterials.skin), 0.02, 1.13, side * 0.31, 0, side * 0.1);
+  }
+  // Pescoço, cabeça e cabelo.
+  add(new THREE.Mesh(geo("neck", () => new THREE.CylinderGeometry(0.06, 0.07, 0.08, 10)), sharedMaterials.skin), 0, 1.62, 0);
+  add(new THREE.Mesh(geo("head", () => new THREE.SphereGeometry(0.12, 18, 14)), sharedMaterials.skin), 0, 1.76, 0);
+  const hair = add(
+    new THREE.Mesh(geo("hair", () => new THREE.SphereGeometry(0.125, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2)), sharedMaterials.hair),
+    -0.01,
+    1.79,
+    0,
+  );
+  hair.rotation.z = 0.15;
+
+  group.scale.setScalar(PLAYER_SCALE["3d"]);
+  return { group, jersey, shorts, socks };
+}
+
+/** Calção e meião um pouco mais escuros que a camisa, para dar contraste. */
+function paint(figure: PlayerFigure, color: string): void {
+  const base = new THREE.Color(color);
+  figure.jersey.color.copy(base);
+  figure.shorts.color.copy(base).multiplyScalar(0.55);
+  figure.socks.color.copy(base).multiplyScalar(0.8);
+}
+
 /** Ordem estável das posições entre atualizações: por linha e, dentro dela, da esquerda para a direita. */
 function ordered(roles: PatternRole[]): PatternRole[] {
   return [...roles].sort((a, b) => a.line - b.line || a.y - b.y);
@@ -147,10 +229,8 @@ interface SceneState {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
-  bodies: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshStandardMaterial>[];
-  zones: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>[];
+  figures: PlayerFigure[];
   targets: THREE.Vector3[];
-  zoneScales: THREE.Vector2[];
   lines: THREE.Group;
   heats: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[];
 }
@@ -226,29 +306,17 @@ export function PatternField3D({ layers, mode, showHeat }: Props) {
       scene,
       camera,
       controls,
-      bodies: [],
-      zones: [],
+      figures: [],
       targets: [],
-      zoneScales: [],
       lines,
       heats,
     };
-    const bodyGeometry = new THREE.CylinderGeometry(1.15, 1.15, 2.0, 24);
-    const zoneGeometry = new THREE.CircleGeometry(1, 40);
     for (let i = 0; i < ROLES * MAX_LAYERS; i++) {
-      const body = new THREE.Mesh(bodyGeometry, new THREE.MeshStandardMaterial({ roughness: 0.55 }));
-      body.visible = false;
-      const zone = new THREE.Mesh(
-        zoneGeometry,
-        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.22, depthWrite: false }),
-      );
-      zone.rotation.x = -Math.PI / 2;
-      zone.visible = false;
-      scene.add(body, zone);
-      state.bodies.push(body);
-      state.zones.push(zone);
+      const figure = makePlayer();
+      figure.group.visible = false;
+      scene.add(figure.group);
+      state.figures.push(figure);
       state.targets.push(new THREE.Vector3());
-      state.zoneScales.push(new THREE.Vector2(1, 1));
     }
     stateRef.current = state;
 
@@ -272,12 +340,8 @@ export function PatternField3D({ layers, mode, showHeat }: Props) {
       const dt = Math.min((now - last) / 1000, 0.1);
       last = now;
       const k = 1 - Math.exp(-FOLLOW_RATE * dt);
-      state.bodies.forEach((body, i) => {
-        body.position.lerp(state.targets[i], k);
-        const zone = state.zones[i];
-        zone.position.set(body.position.x, 0.03, body.position.z);
-        zone.scale.x += (state.zoneScales[i].x - zone.scale.x) * k;
-        zone.scale.y += (state.zoneScales[i].y - zone.scale.y) * k;
+      state.figures.forEach((figure, i) => {
+        figure.group.position.lerp(state.targets[i], k);
       });
       controls.update();
       renderer.render(scene, camera);
@@ -299,12 +363,13 @@ export function PatternField3D({ layers, mode, showHeat }: Props) {
     const state = stateRef.current;
     const host = hostRef.current;
     if (state && host) placeCamera(state, mode, host.clientWidth, host.clientHeight);
+    state?.figures.forEach((f) => f.group.scale.setScalar(PLAYER_SCALE[mode]));
   }, [mode]);
 
   useEffect(() => {
     const state = stateRef.current;
     if (!state) return;
-    const first = state.bodies.every((b) => !b.visible);
+    const first = state.figures.every((f) => !f.group.visible);
 
     for (const child of [...state.lines.children]) {
       state.lines.remove(child);
@@ -318,25 +383,18 @@ export function PatternField3D({ layers, mode, showHeat }: Props) {
 
       for (let k = 0; k < ROLES; k++) {
         const i = layerIndex * ROLES + k;
-        const body = state.bodies[i];
-        const zone = state.zones[i];
+        const figure = state.figures[i];
         const role = roles[k];
         if (!role || !layer) {
-          body.visible = false;
-          zone.visible = false;
+          figure.group.visible = false;
           continue;
         }
-        state.targets[i].copy(toScene(role.x, role.y, 1.0));
-        // Mancha = onde esse jogador costuma ficar (1 desvio padrão em cada direção, no mínimo 2 m).
-        state.zoneScales[i].set(Math.max(2, role.sx), Math.max(2, role.sy));
-        if (first || !body.visible) {
-          body.position.copy(state.targets[i]);
-          zone.scale.set(state.zoneScales[i].x, state.zoneScales[i].y, 1);
-        }
-        body.material.color.set(layer.color);
-        zone.material.color.set(layer.color);
-        body.visible = true;
-        zone.visible = true;
+        state.targets[i].copy(toScene(role.x, role.y, 0));
+        if (first || !figure.group.visible) figure.group.position.copy(state.targets[i]);
+        // De frente para o gol que ataca: quem foi girado (o time que defende) olha para a esquerda.
+        figure.group.rotation.y = layer.mirror ? Math.PI : 0;
+        paint(figure, layer.color);
+        figure.group.visible = true;
       }
 
       // Linhas da formação: liga as posições de cada linha, de um lado ao outro.

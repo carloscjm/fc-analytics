@@ -132,7 +132,7 @@ export default function App() {
   const [benchmark, setBenchmark] = useState<BenchmarkMessage | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [cameraMode, setCameraMode] = useState<CameraMode>("top");
-  const [showHeat, setShowHeat] = useState(true);
+  const [showHeat, setShowHeat] = useState(false);
   const [selected, setSelected] = useState<string>("0-ataque");
   const [patterns, setPatterns] = useState<PatternsInfo | null>(null);
   const [showPitch, setShowPitch] = useState(true);
@@ -376,7 +376,7 @@ export default function App() {
         {duo
           ? "Os dois padrões vêm dos mesmos momentos do jogo: o time que ataca vai para a direita e o que defende fica do outro lado. "
           : "O time aparece sempre atacando da esquerda para a direita; esquerda e direita são do ponto de vista dele. "}
-        Cada boneco é uma posição média e a mancha em volta mostra onde ela costuma variar. A câmera da TV não mostra o campo
+        Cada jogador é uma posição média do time naquela fase. A câmera da TV não mostra o campo
         inteiro, então é uma aproximação que melhora com mais minutos de jogo.
         {sourceTotal > 0 && (
           <>

@@ -27,6 +27,14 @@ def test_split_lines_finds_back_middle_front():
     assert [len(g) for g in lines] == [4, 4, 2]
 
 
+def test_split_lines_four_lines_and_football_limits():
+    f4231 = np.array([22, 20, 20, 22, 38, 38, 52, 54, 52, 66], dtype=np.float32)
+    assert [len(g) for g in split_lines(f4231)] == [4, 2, 3, 1]
+    # Duas posições bem recuadas não viram uma "defesa de 2": a defesa tem de 3 a 5.
+    odd = np.array([20, 21, 27, 28, 28, 40, 41, 42, 60, 61], dtype=np.float32)
+    assert 3 <= len(split_lines(odd)[0]) <= 5
+
+
 def test_compute_pattern_recovers_formations():
     p442 = compute_pattern(frames_from(F442))
     assert p442["formation"] == "4-4-2"

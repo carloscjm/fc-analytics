@@ -82,26 +82,34 @@ def normalize(points: np.ndarray, defends_left: bool) -> np.ndarray:
 
 
 def split_lines(xs: np.ndarray) -> list[list[int]]:
-    """Divide as posições (pela profundidade) em 3 ou 4 linhas, de trás para a frente."""
+    """Divide as 10 posições (pela profundidade) em 3 ou 4 linhas, de trás para a frente.
+
+    Testa todas as divisões possíveis e fica com a de linhas mais "retas" (menor
+    variação de profundidade dentro de cada linha), respeitando o que existe no
+    futebol: defesa com 3 a 5 jogadores e ataque com 1 a 3. Uma quarta linha só
+    entra se separar bem melhor do que três.
+    """
+    from itertools import combinations
+
     order = np.argsort(xs)
     sorted_x = xs[order]
-    best: list[list[int]] | None = None
-    best_cost = float("inf")
+    n = len(sorted_x)
+    best: tuple[float, list[list[int]]] | None = None
     for k in (3, 4):
-        # Cortes nas k-1 maiores distâncias entre posições vizinhas.
-        gaps = np.diff(sorted_x)
-        cuts = sorted(np.argsort(gaps)[-(k - 1):])
-        groups, start = [], 0
-        for c in cuts:
-            groups.append(list(order[start : c + 1]))
-            start = c + 1
-        groups.append(list(order[start:]))
-        spread = sum(float(np.ptp(xs[g])) if len(g) > 1 else 0.0 for g in groups)
-        # A quarta linha só vale se separar bem (custo por linha extra).
-        cost = spread + (LINE_GAP_SPLIT_M * 1.6 if k == 4 else 0.0)
-        if min(len(g) for g in groups) >= 1 and cost < best_cost:
-            best, best_cost = groups, cost
-    return best or [list(order)]
+        for cuts in combinations(range(1, n), k - 1):
+            bounds = (0, *cuts, n)
+            sizes = [bounds[i + 1] - bounds[i] for i in range(k)]
+            if not (3 <= sizes[0] <= 5 and 1 <= sizes[-1] <= 3):
+                continue
+            cost = sum(float(np.var(sorted_x[bounds[i] : bounds[i + 1]])) * sizes[i] for i in range(k))
+            if k == 4:
+                cost += LINE_GAP_SPLIT_M**2 * 1.5
+            if best is None or cost < best[0]:
+                groups = [list(order[bounds[i] : bounds[i + 1]]) for i in range(k)]
+                best = (cost, groups)
+    if best is None:
+        return [list(order)]
+    return best[1]
 
 
 def describe_block(line_height: float) -> str:
