@@ -126,6 +126,56 @@ def split_lines(xs: np.ndarray) -> list[list[int]]:
             best = (cost, [list(order[bounds[i] : bounds[i + 1]]) for i in range(len(sizes))])
     return best[1]
 
+# ---------------------------------------------------------------------------
+# Nome de cada posição (o time sempre atacando para a direita; y pequeno = lado esquerdo do time)
+# ---------------------------------------------------------------------------
+
+
+def _names_for_line(n: int, kind: str, back_three: bool) -> list[str]:
+    """Nomes da esquerda para a direita, por tipo de linha."""
+    if kind == "defesa":
+        return {3: ["ZAG"] * 3, 4: ["LE", "ZAG", "ZAG", "LD"], 5: ["LE", "ZAG", "ZAG", "ZAG", "LD"]}.get(n, ["ZAG"] * n)
+    if kind == "ataque":
+        return {1: ["CA"], 2: ["CA", "CA"], 3: ["PE", "CA", "PD"]}.get(n, ["ATA"] * n)
+    if kind == "meia":  # segunda linha do meio (mais avançada) nas formações de 4 linhas
+        return {1: ["MEI"], 2: ["MEI", "MEI"], 3: ["PE", "MEI", "PD"], 4: ["ME", "MEI", "MEI", "MD"]}.get(n, ["MEI"] * n)
+    # meio-campo
+    wide_left, wide_right = ("ALE", "ALD") if back_three else ("ME", "MD")
+    return {
+        1: ["VOL"],
+        2: ["VOL", "VOL"],
+        3: ["MC", "MC", "MC"],
+        4: [wide_left, "MC", "MC", wide_right],
+        5: [wide_left, "MC", "MC", "MC", wide_right],
+    }.get(n, ["MC"] * n)
+
+
+def name_roles(centers: np.ndarray, lines: list[list[int]]) -> list[str]:
+    """GOL fica de fora (só jogadores de linha): LE, ZAG, LD, VOL, MC, ME, MD, MEI, PE, PD, CA..."""
+    names = [""] * len(centers)
+    k = len(lines)
+    back_three = len(lines[0]) == 3
+    for i, group in enumerate(lines):
+        if i == 0:
+            kind = "defesa"
+        elif i == k - 1:
+            kind = "ataque"
+        elif k == 4 and i == 2:
+            kind = "meia"
+        else:
+            kind = "meio"
+        order = sorted(group, key=lambda j: centers[j][1])
+        labels = _names_for_line(len(order), kind, back_three)
+        for j, label in zip(order, labels):
+            names[j] = label
+        # No meio-campo de 3 ou 5, o mais recuado entre os centrais é o volante.
+        if kind == "meio" and len(order) in (3, 5):
+            central = [j for j in order if names[j] == "MC"]
+            if central:
+                names[min(central, key=lambda j: centers[j][0])] = "VOL"
+    return names
+
+
 def describe_block(line_height: float) -> str:
     if line_height < 30:
         return "baixo"
@@ -177,6 +227,7 @@ def compute_pattern(frames: list[np.ndarray]) -> dict[str, Any] | None:
     line_of = np.zeros(ROLES, dtype=int)
     for i, g in enumerate(lines):
         line_of[g] = i
+    role_names = name_roles(centers, lines)
 
     back = centers[lines[0]]
     front = centers[lines[-1]]
@@ -210,6 +261,7 @@ def compute_pattern(frames: list[np.ndarray]) -> dict[str, Any] | None:
                 "sx": round(float(s[0]), 2),
                 "sy": round(float(s[1]), 2),
                 "line": int(line_of[j]),
+                "name": role_names[j],
                 "share": round(float(sizes[j]) / len(points), 3),
             }
             for j, (c, s) in enumerate(zip(centers, spreads))
@@ -354,5 +406,90 @@ class PatternStore:
                 "needed": MIN_FRAMES_FOR_PATTERN,
                 "pattern": pattern,
             }
+        out["transitions"] = {
+            str(t): transition(out["options"][f"{t}-defesa"]["pattern"], out["options"][f"{t}-ataque"]["pattern"])
+            for t in (0, 1)
+        }
         self.cached = out
         return out
+
+
+# ---------------------------------------------------------------------------
+# Defesa → ataque: para onde cada posição vai quando o time recupera a bola
+# ---------------------------------------------------------------------------
+
+LINE_CHANGE_COST = 8.0
+SIDE_NAMES = {"LE": "lateral esquerdo", "LD": "lateral direito", "ALE": "ala esquerdo", "ALD": "ala direito"}
+
+
+def transition(defense: dict[str, Any] | None, attack: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Liga cada posição da defesa à posição mais provável no ataque e descreve os movimentos que chamam atenção.
+
+    As posições médias de cada fase são grupos de pontos, não jogadores com nome; a ligação
+    usa o lado do campo, a profundidade e a linha de cada posição (a mais barata no total).
+    """
+    if not defense or not attack:
+        return None
+    from scipy.optimize import linear_sum_assignment
+
+    d_roles, a_roles = defense["roles"], attack["roles"]
+    d_lines = max(r["line"] for r in d_roles) or 1
+    a_lines = max(r["line"] for r in a_roles) or 1
+    cost = np.zeros((len(d_roles), len(a_roles)))
+    for i, d in enumerate(d_roles):
+        for j, a in enumerate(a_roles):
+            cost[i, j] = (
+                abs(d["y"] - a["y"])
+                + 0.35 * abs(d["x"] - a["x"])
+                + LINE_CHANGE_COST * abs(d["line"] / d_lines - a["line"] / a_lines)
+            )
+    rows, cols = linear_sum_assignment(cost)
+    moves = []
+    sectors = ("defesa", "meio", "ataque")
+    for i, j in zip(rows, cols):
+        d, a = d_roles[i], a_roles[j]
+        line_kind = 0 if a["line"] == 0 else (2 if a["line"] == a_lines else 1)
+        attack_name = a.get("name", "")
+        # A posição se reconhece melhor pela forma de defender: no ataque ela leva o mesmo nome
+        # (o lateral que sobe até o meio continua "LE", não vira "VOL").
+        if d.get("name"):
+            a["name"] = d["name"]
+        moves.append({
+            "name": d.get("name", ""),
+            "attackName": attack_name,
+            "attackSector": sectors[line_kind],
+            "from": [d["x"], d["y"]],
+            "to": [a["x"], a["y"]],
+            "dx": round(a["x"] - d["x"], 1),
+            "dy": round(a["y"] - d["y"], 1),
+        })
+    shift = float(np.mean([m["dx"] for m in moves]))
+    return {"moves": moves, "teamShift": round(shift, 1), "highlights": highlights(moves, shift, attack)}
+
+
+def highlights(moves: list[dict[str, Any]], shift: float, attack: dict[str, Any]) -> list[str]:
+    """Frases curtas sobre os movimentos mais claros (laterais, volantes, pontas)."""
+    out: list[str] = []
+    out.append(f"O time inteiro avança em média {shift:.0f} m quando passa da defesa para o ataque.")
+    for m in sorted(moves, key=lambda m: -abs(m["dx"] - shift)):
+        name, rel = m["name"], m["dx"] - shift
+        if name in SIDE_NAMES:
+            who = SIDE_NAMES[name]
+            if rel >= 6:
+                out.append(f"O {who} ({name}) sobe {m['dx']:.0f} m: apoia o ataque, {rel:.0f} m a mais que o resto do time.")
+            elif rel <= -4:
+                out.append(f"O {who} ({name}) fica: avança só {max(m['dx'], 0):.0f} m e compõe a defesa quando o time ataca.")
+        elif name in ("PE", "PD"):
+            inward = (m["dy"] > 0) if name == "PE" else (m["dy"] < 0)
+            if abs(m["dy"]) >= 6:
+                side = "fecha para o meio" if inward else "abre pela ponta"
+                out.append(f"O ponta {'esquerdo' if name == 'PE' else 'direito'} ({name}) {side} no ataque ({abs(m['dy']):.0f} m).")
+    # Volante que cai entre os zagueiros na saída de bola: no ataque, fica na altura da defesa e pelo meio.
+    back = [r for r in attack["roles"] if r["line"] == 0]
+    if back:
+        back_x = float(np.mean([r["x"] for r in back]))
+        for m in moves:
+            if m["name"] == "VOL" and abs(m["to"][0] - back_x) <= 6 and abs(m["to"][1] - WIDTH / 2) <= 12:
+                out.append("O volante (VOL) recua para perto dos zagueiros quando o time tem a bola: ajuda na saída de bola.")
+                break
+    return out[:5]

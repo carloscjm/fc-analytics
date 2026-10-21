@@ -48,6 +48,7 @@ pip install torch torchvision || goto :erro
 echo.
 echo [3/4] Instalando as bibliotecas do backend e do frontend ...
 pip install -r backend\requirements-dev.txt || goto :erro
+pip install --no-deps rapidocr==3.9.2 || goto :erro
 pushd frontend
 call npm install || (popd & goto :erro)
 popd

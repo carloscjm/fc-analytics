@@ -79,6 +79,9 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE TABLE IF NOT EXISTS insights (
     id INTEGER PRIMARY KEY, match_id INTEGER NOT NULL, wall REAL, t REAL, kind TEXT, team INTEGER, payload TEXT
 );
+CREATE TABLE IF NOT EXISTS match_meta (
+    match_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY (match_id, key)
+);
 CREATE INDEX IF NOT EXISTS frames_match ON frames (match_id);
 CREATE INDEX IF NOT EXISTS insights_match ON insights (match_id);
 CREATE INDEX IF NOT EXISTS positions_match ON positions (match_id);
@@ -150,6 +153,27 @@ class MatchStore:
         with self._lock:
             self._db.execute("DELETE FROM events WHERE id = ?", (event_id,))
             self._db.commit()
+
+    # ---- dados extras da partida (nomes dos times etc.) ----
+
+    def set_meta(self, match_id: int, key: str, value: Any) -> None:
+        import json
+
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO match_meta (match_id, key, value) VALUES (?, ?, ?)",
+                (match_id, key, json.dumps(value, ensure_ascii=False)),
+            )
+            self._db.commit()
+
+    def get_meta(self, match_id: int, key: str) -> Any:
+        import json
+
+        with self._lock:
+            row = self._db.execute(
+                "SELECT value FROM match_meta WHERE match_id = ? AND key = ?", (match_id, key)
+            ).fetchone()
+        return json.loads(row[0]) if row else None
 
     # ---- insights da Fase 5 (gravados na hora) ----
 

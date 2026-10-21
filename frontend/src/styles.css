@@ -1055,3 +1055,67 @@ kbd {
     line-height: 1.55;
   }
 }
+
+/* ---------- Nomes dos times, posições e defesa → ataque ---------- */
+
+.names-tools {
+  display: inline-flex;
+  gap: 10px;
+  margin-left: 6px;
+}
+
+.names-tools .link {
+  text-decoration: none;
+}
+
+.names-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.names-editor input {
+  font: inherit;
+  font-weight: 600;
+  width: 110px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.names-editor .small-btn {
+  margin-top: 0;
+}
+
+.options {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 1100px) {
+  .options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.transition {
+  margin-top: 10px;
+}
+
+.highlights {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.moves caption {
+  text-align: left;
+  padding-bottom: 6px;
+}
+
+.moves tbody th {
+  width: 18%;
+}

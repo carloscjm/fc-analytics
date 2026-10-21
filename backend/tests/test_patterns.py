@@ -96,3 +96,44 @@ def test_store_separates_attack_and_defense_and_sides():
 
     store.reset()
     assert store.summary()["options"]["0-ataque"]["frames"] == 0
+
+
+def test_position_names():
+    from app.patterns import name_roles
+
+    c442 = np.array(F442, dtype=np.float32)
+    assert sorted(name_roles(c442, split_lines(c442[:, 0]))) == sorted(["LE", "ZAG", "ZAG", "LD", "ME", "MC", "MC", "MD", "CA", "CA"])
+    f4231 = np.array([(22, 8), (20, 26), (20, 42), (22, 60), (38, 28), (38, 40), (54, 10), (52, 34), (54, 58), (66, 34)], dtype=np.float32)
+    names = name_roles(f4231, split_lines(f4231[:, 0]))
+    assert names == ["LE", "ZAG", "ZAG", "LD", "VOL", "VOL", "PE", "MEI", "PD", "CA"]
+    c532 = np.array(F532, dtype=np.float32)
+    assert name_roles(c532, split_lines(c532[:, 0]))[:5] == ["LE", "ZAG", "ZAG", "ZAG", "LD"]
+
+
+def test_transition_finds_the_fullback_going_up():
+    from app.patterns import name_roles, transition
+
+    def pattern(points):
+        c = np.array(points, dtype=np.float32)
+        lines = split_lines(c[:, 0])
+        line_of = {j: i for i, g in enumerate(lines) for j in g}
+        names = name_roles(c, lines)
+        return {"roles": [{"x": float(x), "y": float(y), "line": line_of[j], "name": names[j]} for j, (x, y) in enumerate(c)]}
+
+    defense = pattern(F442)
+    # No ataque o time sobe 15 m; o lateral esquerdo sobe 28 m (sem passar o meia) e o direito fica.
+    attack_pts = [(x + 15, y) for x, y in F442]
+    attack_pts[0] = (F442[0][0] + 28, F442[0][1])
+    attack_pts[3] = (F442[3][0] + 3, F442[3][1])
+    result = transition(defense, pattern(attack_pts))
+    by_name = {m["name"]: m for m in result["moves"] if m["name"] in ("LE", "LD")}
+    assert by_name["LE"]["dx"] == 28 and by_name["LD"]["dx"] == 3
+    text = " ".join(result["highlights"])
+    assert "lateral esquerdo (LE) sobe 28 m" in text
+    assert "lateral direito (LD) fica" in text
+    assert transition(defense, None) is None
+    # No padrão de ataque, cada posição fica com o nome que tem na defesa.
+    attack = pattern(attack_pts)
+    transition(defense, attack)
+    le = max(attack["roles"], key=lambda r: r["x"] if r["y"] < 15 and r["line"] < 2 else -1)
+    assert sorted(r["name"] for r in attack["roles"]) == sorted(r["name"] for r in defense["roles"])

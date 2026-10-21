@@ -25,7 +25,11 @@ GHOST_MIN_LIFE = 1.0
 GHOST_MERGE_M = 5.0
 NEW_ID_TAKES_GHOST_M = 6.0
 GHOSTS_APART_M = 3.0
-OUTSIDE_MARGIN_M = 4.0
+OUTSIDE_MARGIN_M = 4.0  # bola: pode sair um pouco do campo
+# Pessoas a mais de 1,5 m fora das linhas (banco, gandulas, técnico) não entram no mapa.
+PLAYER_OUTSIDE_MARGIN_M = 1.5
+# Goleiro "achado" longe dos dois gols é, quase sempre, um jogador de linha.
+GOALKEEPER_MAX_DISTANCE_M = 30.0
 BALL_TRAIL_SECONDS = 3.0
 
 
@@ -37,6 +41,27 @@ class MapPlayer:
     role: str
     seen_ts: float
     first_ts: float
+
+
+def fix_goalkeepers(people: list[dict[str, Any]], meters: np.ndarray) -> list[str]:
+    """Papéis corrigidos pela posição: goleiro longe do gol vira jogador, e fica no máximo um goleiro por time."""
+    roles = [b["l"] for b in people]
+    best: dict[Any, tuple[float, int]] = {}
+    for i, (box, (x, _)) in enumerate(zip(people, meters)):
+        if roles[i] != "goleiro":
+            continue
+        to_goal = min(float(x), LENGTH - float(x))
+        if to_goal > GOALKEEPER_MAX_DISTANCE_M:
+            roles[i] = "jogador"
+            continue
+        team = box.get("t")
+        if team in best and best[team][0] <= to_goal:
+            roles[i] = "jogador"
+        else:
+            if team in best:
+                roles[best[team][1]] = "jogador"
+            best[team] = (to_goal, i)
+    return roles
 
 
 class FieldMap:
@@ -73,8 +98,9 @@ class FieldMap:
         if people:
             feet = np.array([[(b["b"][0] + b["b"][2]) / 2, b["b"][3]] for b in people], dtype=np.float32)
             meters = apply_h(h, feet)
-            for box, (x, y) in zip(people, meters):
-                if not self._inside(x, y):
+            roles = fix_goalkeepers(people, meters)
+            for box, (x, y), role in zip(people, meters, roles):
+                if not self._inside(x, y, PLAYER_OUTSIDE_MARGIN_M):
                     continue
                 tid = int(box["id"])
                 prev = self.players.get(tid)
@@ -86,7 +112,7 @@ class FieldMap:
                     # ID novo: o fantasma mais próximo provavelmente é o mesmo jogador.
                     self._take_ghost(float(x), float(y), ts)
                     first = ts
-                self.players[tid] = MapPlayer(float(x), float(y), box.get("t"), box["l"], ts, first)
+                self.players[tid] = MapPlayer(float(x), float(y), box.get("t"), role, ts, first)
 
         ball = next((b for b in boxes if b["l"] == "bola"), None)
         if ball is not None:
@@ -122,8 +148,7 @@ class FieldMap:
             del self.players[best]
 
     @staticmethod
-    def _inside(x: float, y: float) -> bool:
-        m = OUTSIDE_MARGIN_M
+    def _inside(x: float, y: float, m: float = OUTSIDE_MARGIN_M) -> bool:
         return -m <= x <= LENGTH + m and -m <= y <= WIDTH + m
 
     def snapshot(self, ts: float) -> dict[str, Any]:

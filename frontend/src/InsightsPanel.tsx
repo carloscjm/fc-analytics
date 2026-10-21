@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { InsightItem, InsightsInfo, LlmInfo } from "./backend";
 
-const TEAM_NAMES = ["Time A", "Time B"] as const;
+
 
 export type InsightCommand =
   | { type: "llm_analyze_now" }
@@ -15,6 +15,7 @@ interface Props {
   info: InsightsInfo | null;
   colors: [string, string];
   send: (command: InsightCommand) => void;
+  names: [string, string];
   /** coluna larga, para ler as análises com calma */
   wide: boolean;
   onToggleWide: () => void;
@@ -160,7 +161,17 @@ function RemoveButton({ onRemove, what }: { onRemove: () => void; what: string }
   );
 }
 
-function Item({ item, colors, onRemove }: { item: InsightItem; colors: [string, string]; onRemove: () => void }) {
+function Item({
+  item,
+  colors,
+  names,
+  onRemove,
+}: {
+  item: InsightItem;
+  colors: [string, string];
+  names: [string, string];
+  onRemove: () => void;
+}) {
   const when = `${clock(item.wall)} · ${Math.floor(item.t / 60) + 1}'`;
   if (item.kind === "analise" && item.analysis) {
     const a = item.analysis;
@@ -203,7 +214,7 @@ function Item({ item, colors, onRemove }: { item: InsightItem; colors: [string, 
         {item.team !== null && (
           <span className="small team-tag">
             <span className="swatch" style={{ background: colors[item.team] }} />
-            {TEAM_NAMES[item.team]}
+            {names[item.team]}
           </span>
         )}
         <span className="muted small">{when}</span>
@@ -215,7 +226,7 @@ function Item({ item, colors, onRemove }: { item: InsightItem; colors: [string, 
 }
 
 /** Feed de insights: alertas por regra na hora e a análise do LLM local a cada poucos minutos. */
-export function InsightsPanel({ info, colors, send, wide, onToggleWide }: Props) {
+export function InsightsPanel({ info, colors, names, send, wide, onToggleWide }: Props) {
   const items = [...(info?.items ?? [])].reverse();
   const [confirmClear, setConfirmClear] = useState(false);
   useEffect(() => {
@@ -259,6 +270,7 @@ export function InsightsPanel({ info, colors, send, wide, onToggleWide }: Props)
               key={item.id}
               item={item}
               colors={colors}
+              names={names}
               onRemove={() => send({ type: "insight_delete", id: item.id })}
             />
           ))}

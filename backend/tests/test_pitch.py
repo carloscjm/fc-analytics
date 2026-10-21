@@ -201,3 +201,30 @@ def test_inconsistent_keypoints_are_rejected():
     # Dois pontos com rótulos trocados: sobram só 4 que concordam entre si.
     xy[visible[0]], xy[visible[-1]] = kp.xy[visible[-1]].copy(), kp.xy[visible[0]].copy()
     assert HomographyTracker().update(Keypoints(xy, kp.conf, 0), W, H, ts=0.0) is None
+
+
+def test_keypoints_outside_the_grass_are_dropped():
+    from app.pitch import Keypoints, keypoints_on_grass
+
+    image = np.zeros((360, 640, 3), dtype=np.uint8)
+    image[:, :480] = (40, 140, 50)  # gramado (BGR) à esquerda; faixa preta à direita
+    cv2.line(image, (200, 0), (200, 359), (255, 255, 255), 3)  # linha branca sobre a grama
+    kp = Keypoints(
+        xy=np.array([[100, 100], [200, 180], [560, 100], [470, 200]], dtype=np.float32),
+        conf=np.array([0.9, 0.9, 0.9, 0.9], dtype=np.float32),
+        infer_ms=0.0,
+    )
+    out = keypoints_on_grass(image, kp)
+    assert out.conf[0] > 0 and out.conf[1] > 0  # na grama e sobre a linha
+    assert out.conf[2] == 0  # na faixa preta
+    assert out.conf[3] > 0  # na beira do gramado ainda vale
+
+
+def test_goalkeeper_far_from_goal_becomes_player():
+    from app.fieldmap import fix_goalkeepers
+
+    people = [
+        {"l": "goleiro", "t": 0}, {"l": "goleiro", "t": 0}, {"l": "goleiro", "t": 1}, {"l": "jogador", "t": 1},
+    ]
+    meters = np.array([[4, 34], [12, 30], [55, 34], [60, 20]], dtype=np.float32)
+    assert fix_goalkeepers(people, meters) == ["goleiro", "jogador", "jogador", "jogador"]

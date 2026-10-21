@@ -5,7 +5,12 @@ import { EChart, chartTheme, type ChartOption } from "./EChart";
 type WindowKey = "recentes" | "partida";
 type Team = 0 | 1;
 
-const TEAM_NAMES = ["Time A", "Time B"] as const;
+const DEFAULT_NAMES: [string, string] = ["Time A", "Time B"];
+
+/** Siglas dos times (do placar ou digitadas); "Time A"/"Time B" enquanto não houver. */
+function namesOf(stats: MatchStats | null): [string, string] {
+  return stats?.teamNames ?? DEFAULT_NAMES;
+}
 
 const EVENT_LABELS: Record<MatchEventKind, string> = {
   gol: "Gol",
@@ -40,7 +45,10 @@ const KEY_HINT: Record<Exclude<MatchEventKind, "intervalo">, string> = {
 export type Command =
   | { type: "event"; kind: MatchEventKind; team: Team | null }
   | { type: "undo_event" }
-  | { type: "new_match" };
+  | { type: "new_match" }
+  | { type: "set_team_names"; names: [string, string] }
+  | { type: "swap_team_names" }
+  | { type: "auto_team_names" };
 
 interface Props {
   stats: MatchStats | null;
@@ -58,9 +66,9 @@ function formatClock(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function describe(event: MatchEvent, breaksBefore: number): string {
+function describe(event: MatchEvent, breaksBefore: number, names: [string, string]): string {
   if (event.kind === "intervalo") return breaksBefore % 2 === 0 ? "Intervalo" : "Começo do 2º tempo";
-  return `${EVENT_LABELS[event.kind]} do ${TEAM_NAMES[event.team ?? 0]}`;
+  return `${EVENT_LABELS[event.kind]} · ${names[event.team ?? 0]}`;
 }
 
 function useDarkMode(): boolean {
@@ -171,7 +179,7 @@ function rowsFor(w: WindowStats): Row[] {
 // Gráficos
 // ---------------------------------------------------------------------------
 
-function eventMarks(events: MatchEvent[], muted: string) {
+function eventMarks(events: MatchEvent[], muted: string, names: [string, string]) {
   let breaks = 0;
   return events
     .filter((e) => e.kind !== "substituicao")
@@ -181,7 +189,7 @@ function eventMarks(events: MatchEvent[], muted: string) {
           ? breaks++ % 2 === 0
             ? "Intervalo"
             : "2º tempo"
-          : `${SHORT_LABELS[e.kind]} ${e.team === 0 ? "A" : "B"}`;
+          : `${SHORT_LABELS[e.kind]} ${names[e.team ?? 0]}`;
       return {
         xAxis: String(minuteOf(e.t)),
         label: { formatter: text, color: muted, fontSize: 11 },
@@ -252,7 +260,7 @@ function possessionOption(stats: MatchStats, theme: Theme): ChartOption {
     yAxis: { ...(base.yAxis as object), max: 100, interval: 25 },
     tooltip: { ...(base.tooltip as object), axisPointer: { type: "shadow" } },
     series: [0, 1].map((t) => ({
-      name: TEAM_NAMES[t],
+      name: namesOf(stats)[t],
       type: "bar",
       stack: "posse",
       barMaxWidth: 18,
@@ -263,7 +271,7 @@ function possessionOption(stats: MatchStats, theme: Theme): ChartOption {
         borderWidth: 1,
         borderRadius: t === 1 ? [4, 4, 0, 0] : 0,
       },
-      ...(t === 0 ? { markLine: { symbol: "none", silent: true, data: eventMarks(stats.events, theme.muted) } } : {}),
+      ...(t === 0 ? { markLine: { symbol: "none", silent: true, data: eventMarks(stats.events, theme.muted, namesOf(stats)) } } : {}),
     })),
   };
 }
@@ -276,14 +284,14 @@ function lineOption(stats: MatchStats, theme: Theme): ChartOption {
     yAxis: { ...(base.yAxis as object), min: 0 },
     tooltip: { ...(base.tooltip as object), axisPointer: { type: "line", lineStyle: { color: theme.muted } } },
     series: [0, 1].map((t) => ({
-      name: TEAM_NAMES[t],
+      name: namesOf(stats)[t],
       type: "line",
       data: line[t],
       showSymbol: minutes.length < 3,
       symbolSize: 8,
       lineStyle: { width: 2, color: t === 0 ? theme.teamA : theme.teamB },
       itemStyle: { color: t === 0 ? theme.teamA : theme.teamB },
-      ...(t === 0 ? { markLine: { symbol: "none", silent: true, data: eventMarks(stats.events, theme.muted) } } : {}),
+      ...(t === 0 ? { markLine: { symbol: "none", silent: true, data: eventMarks(stats.events, theme.muted, namesOf(stats)) } } : {}),
     })),
   };
 }
@@ -292,7 +300,33 @@ function lineOption(stats: MatchStats, theme: Theme): ChartOption {
 // Painel
 // ---------------------------------------------------------------------------
 
+function NamesEditor({ names, onSave, onCancel }: { names: [string, string]; onSave: (n: [string, string]) => void; onCancel: () => void }) {
+  const [a, setA] = useState(names[0]);
+  const [b, setB] = useState(names[1]);
+  return (
+    <form
+      className="names-editor"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (a.trim() && b.trim()) onSave([a.trim(), b.trim()]);
+      }}
+    >
+      <input aria-label="Nome do primeiro time" value={a} maxLength={12} onChange={(e) => setA(e.target.value)} />
+      <span>×</span>
+      <input aria-label="Nome do segundo time" value={b} maxLength={12} onChange={(e) => setB(e.target.value)} />
+      <button className="btn small-btn primary" type="submit" disabled={!a.trim() || !b.trim()}>
+        Salvar
+      </button>
+      <button className="link" type="button" onClick={onCancel}>
+        Cancelar
+      </button>
+    </form>
+  );
+}
+
 export function MatchPanel({ stats, colors, send }: Props) {
+  const names = namesOf(stats);
+  const [editingNames, setEditingNames] = useState(false);
   const [windowKey, setWindowKey] = useState<WindowKey>("recentes");
   const [confirmNew, setConfirmNew] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
@@ -309,7 +343,7 @@ export function MatchPanel({ stats, colors, send }: Props) {
       if (kind) {
         const team: Team = e.shiftKey ? 1 : 0;
         send({ type: "event", kind, team });
-        setLastAction(`${EVENT_LABELS[kind]} do ${TEAM_NAMES[team]} marcado. Z desfaz.`);
+        setLastAction(`${EVENT_LABELS[kind]} · ${names[team]} marcado. Z desfaz.`);
       } else if (e.code === "KeyI") {
         send({ type: "event", kind: "intervalo", team: null });
         setLastAction(paused ? "Começo do 2º tempo marcado. Z desfaz." : "Intervalo marcado: a coleta pausa até o 2º tempo.");
@@ -342,7 +376,7 @@ export function MatchPanel({ stats, colors, send }: Props) {
         ? paused
           ? "Começo do 2º tempo marcado."
           : "Intervalo marcado: a coleta pausa até o 2º tempo."
-        : `${EVENT_LABELS[kind]} do ${TEAM_NAMES[team ?? 0]} marcado.`,
+        : `${EVENT_LABELS[kind]} · ${names[team ?? 0]} marcado.`,
     );
   };
 
@@ -350,7 +384,7 @@ export function MatchPanel({ stats, colors, send }: Props) {
   const hasData = !!w && w.seconds > 0;
   let breaks = 0;
   const timeline = (stats?.events ?? []).map((e) => {
-    const text = describe(e, breaks);
+    const text = describe(e, breaks, names);
     if (e.kind === "intervalo") breaks++;
     return { ...e, text };
   });
@@ -383,24 +417,62 @@ export function MatchPanel({ stats, colors, send }: Props) {
       </div>
 
       <div className="scoreline">
-        <div className="score">
-          <span className="score-team">
-            <span className="swatch big" style={{ background: colors[0] }} />
-            Time A
-          </span>
-          <strong className="score-num">
-            {stats?.score[0] ?? 0} × {stats?.score[1] ?? 0}
-          </strong>
-          <span className="score-team">
-            Time B
-            <span className="swatch big" style={{ background: colors[1] }} />
-          </span>
-        </div>
+        {editingNames ? (
+          <NamesEditor
+            names={names}
+            onCancel={() => setEditingNames(false)}
+            onSave={(n) => {
+              send({ type: "set_team_names", names: n });
+              setEditingNames(false);
+              setLastAction(`Nomes salvos: ${n[0]} e ${n[1]}.`);
+            }}
+          />
+        ) : (
+          <div className="score">
+            <span className="score-team">
+              <span className="swatch big" style={{ background: colors[0] }} />
+              {names[0]}
+            </span>
+            <strong className="score-num">
+              {stats?.score[0] ?? 0} × {stats?.score[1] ?? 0}
+            </strong>
+            <span className="score-team">
+              {names[1]}
+              <span className="swatch big" style={{ background: colors[1] }} />
+            </span>
+            <span className="names-tools">
+              <button
+                className="link"
+                title="Trocar os nomes de lado (quando a sigla ficou na cor de camisa errada)"
+                onClick={() => {
+                  send({ type: "swap_team_names" });
+                  setLastAction("Nomes trocados de lado.");
+                }}
+                disabled={!stats?.teamNamesSource}
+              >
+                ⇄ Trocar
+              </button>
+              <button className="link" onClick={() => setEditingNames(true)}>
+                Editar
+              </button>
+              {stats?.teamNamesSource === "manual" && (
+                <button className="link" onClick={() => send({ type: "auto_team_names" })}>
+                  Ler do placar
+                </button>
+              )}
+            </span>
+          </div>
+        )}
         <div className="muted small">
           {stats ? (
             <>
               {paused ? <span className="pill pill-conectando">Intervalo: coleta pausada</span> : `${stats.period}º tempo`} ·{" "}
-              {formatClock(stats.elapsedS)} desde o começo no app
+              {formatClock(stats.elapsedS)} desde o começo no app ·{" "}
+              {stats.teamNamesSource === "placar"
+                ? "nomes lidos do placar (confira a cor)"
+                : stats.teamNamesSource === "manual"
+                  ? "nomes digitados"
+                  : "lendo o placar para achar os nomes..."}
             </>
           ) : (
             "Aguardando o backend"
@@ -411,7 +483,7 @@ export function MatchPanel({ stats, colors, send }: Props) {
       <div className="events-bar">
         {[0, 1].map((t) => (
           <div key={t} className="events-team">
-            <span className="muted small">{TEAM_NAMES[t]}</span>
+            <span className="muted small">{names[t]}</span>
             {(Object.keys(KEY_HINT) as (keyof typeof KEY_HINT)[]).map((kind) => (
               <button key={kind} className="btn small-btn ev" onClick={() => mark(kind, t as Team)}>
                 {SHORT_LABELS[kind]}

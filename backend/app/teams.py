@@ -42,6 +42,9 @@ MIN_TEAM_DISTANCE = 15.0
 # Classificação
 OUTLIER_RATIO = 2.5
 OUTLIER_MIN_DISTANCE = 18.0
+# O modelo de futebol já separa árbitro e goleiro: para quem ele chama de jogador, a cor pode variar mais
+# (sombra, sol, número grande nas costas) antes de virar "fora do padrão".
+PLAYER_LABEL_TOLERANCE = 1.8
 VOTES_KEPT = 12
 
 # Autocorreção
@@ -108,10 +111,11 @@ class TeamModel:
     centers: np.ndarray  # (2, 3)
     spreads: np.ndarray  # distância típica de um jogador ao centro do seu time
 
-    def classify(self, feature: np.ndarray) -> int:
+    def classify(self, feature: np.ndarray, tolerance: float = 1.0) -> int:
+        """Time mais parecido, ou OUTLIER se a cor fica longe dos dois. `tolerance` > 1 aceita cores mais distantes."""
         dist = np.linalg.norm(self.centers - feature, axis=1)
         team = int(dist.argmin())
-        limit = max(OUTLIER_RATIO * float(self.spreads[team]), OUTLIER_MIN_DISTANCE)
+        limit = max(OUTLIER_RATIO * float(self.spreads[team]), OUTLIER_MIN_DISTANCE) * tolerance
         return OUTLIER if dist[team] > limit else team
 
 
@@ -171,8 +175,8 @@ class TeamClassifier:
         by_pool = len(self.pool) / MIN_POOL
         return float(min(0.99, min(by_frames, by_pool)))
 
-    def observe_frame(self, features: list[tuple[int | None, np.ndarray]], ts: float, wide: bool) -> None:
-        """Recebe as cores de todos os jogadores de um frame (com o ID, quando houver)."""
+    def observe_frame(self, features: list[tuple], ts: float, wide: bool) -> None:
+        """Recebe as cores de todos os jogadores de um frame: (ID ou None, cor[, tolerância])."""
         if self.start_ts is None:
             self.start_ts = ts
         self.last_ts = ts
@@ -180,14 +184,15 @@ class TeamClassifier:
         if self.model is None:
             if wide and features:
                 self.wide_frames += 1
-                self.pool.extend(f for _, f in features)
+                self.pool.extend(item[1] for item in features)
                 if len(self.pool) > POOL_LIMIT:
                     self.pool = self.pool[-POOL_LIMIT:]
             self._maybe_fit()
             return
 
-        for tid, feature in features:
-            team = self.model.classify(feature)
+        for item in features:
+            tid, feature = item[0], item[1]
+            team = self.model.classify(feature, item[2] if len(item) > 2 else 1.0)
             if tid is not None:
                 self.votes[tid].append(team)
             if wide:

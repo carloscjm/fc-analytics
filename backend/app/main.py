@@ -301,6 +301,20 @@ def debug_stats() -> dict:
     return {"ready": True, **pipeline.latest_stats()}
 
 
+@app.get("/debug/names")
+def debug_names() -> dict:
+    pipeline = getattr(app.state, "pipeline", None)
+    if pipeline is None:
+        return {"ready": False}
+    return {
+        "ready": True,
+        "labels": pipeline.team_labels(),
+        "stored": pipeline.team_names.to_json(),
+        "colors": pipeline.teams.info().get("colors"),
+        "reader": pipeline.name_reader.status(),
+    }
+
+
 @app.get("/debug/insights")
 def debug_insights() -> dict:
     pipeline = getattr(app.state, "pipeline", None)
@@ -570,6 +584,24 @@ async def handle_command(
         await broadcast(websocket.app, {"type": "stats", "stats": stats})
         if kind == "new_match":
             await broadcast(websocket.app, {"type": "patterns", **pipeline.latest_patterns()})
+
+    elif kind in ("set_team_names", "swap_team_names", "auto_team_names"):
+        pipeline = websocket.app.state.pipeline
+        if pipeline is None:
+            return
+        try:
+            if kind == "set_team_names":
+                pipeline.set_team_names(data.get("names"))
+            elif kind == "swap_team_names":
+                pipeline.swap_team_names()
+            else:
+                pipeline.auto_team_names()
+        except ValueError as exc:
+            await send(websocket, {"type": "error", "detail": str(exc)})
+            return
+        stats = await asyncio.to_thread(pipeline.refresh_stats)
+        pipeline.stats_sent = pipeline.stats_version
+        await broadcast(websocket.app, {"type": "stats", "stats": stats})
 
     elif kind in ("insight_delete", "insights_clear"):
         pipeline = websocket.app.state.pipeline

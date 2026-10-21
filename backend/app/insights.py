@@ -69,6 +69,12 @@ def _last_minutes(values: list[float | None], n: int) -> list[float] | None:
     return [float(v) for v in tail]  # type: ignore[arg-type]
 
 
+def team_labels(stats: dict[str, Any]) -> tuple[str, str]:
+    """Nomes dos times (siglas do placar ou digitados); "Time A" e "Time B" enquanto não houver."""
+    names = stats.get("teamNames") or TEAM
+    return (str(names[0] or TEAM[0]), str(names[1] or TEAM[1]))
+
+
 def evaluate_rules(stats: dict[str, Any]) -> list[Alert]:
     """Todos os alertas cujas condições valem agora (o tempo de espera é aplicado depois)."""
     alerts: list[Alert] = []
@@ -78,7 +84,7 @@ def evaluate_rules(stats: dict[str, Any]) -> list[Alert]:
     enough = seconds >= MIN_RECENT_SECONDS
     coverage = (recent.get("possessionCoverage") or 0) / 100
     for t in (0, 1):
-        name = TEAM[t]
+        name = team_labels(stats)[t]
         line = _last_minutes(timeline["line"][t], 3)
         if line and min(line) >= 45:
             alerts.append(Alert("linha_alta", t, (
@@ -127,46 +133,47 @@ def evaluate_rules(stats: dict[str, Any]) -> list[Alert]:
 # ---------------------------------------------------------------------------
 
 
-def _pair(values: list[Any] | None, unit_round: int = 0) -> dict[str, Any] | None:
+def _pair(values: list[Any] | None, names: tuple[str, str] = TEAM) -> dict[str, Any] | None:
     if values is None:
         return None
-    return {TEAM[t]: (round(v, unit_round) if isinstance(v, (int, float)) else v) for t, v in enumerate(values)}
+    return {names[t]: (round(v) if isinstance(v, (int, float)) else v) for t, v in enumerate(values)}
 
 
-def _window(w: dict[str, Any]) -> dict[str, Any]:
+def _window(w: dict[str, Any], names: tuple[str, str] = TEAM) -> dict[str, Any]:
     corridors = {}
     for t in (0, 1):
         c = w["corridors"][t]
-        corridors[TEAM[t]] = None if c is None else {"esquerda": round(c[0]), "centro": round(c[1]), "direita": round(c[2])}
+        corridors[names[t]] = None if c is None else {"esquerda": round(c[0]), "centro": round(c[1]), "direita": round(c[2])}
     return {
         "minutos_de_jogo_analisados": round(w["seconds"] / 60, 1),
-        "posse_pct": _pair(w["possession"]),
-        "dominio_territorial_pct": _pair(w["tilt"]),
-        "passes": _pair(w["passes"]),
-        "precisao_passes_pct": _pair(w["passAccuracy"]),
-        "perdas_de_bola": _pair(w["losses"]),
-        "recupera_em_5s_pct": _pair(w["recoveries5s"]),
-        "linha_defesa_m_do_proprio_gol": _pair(w["line"]),
-        "distancia_defesa_ataque_m": _pair(w["depth"]),
-        "largura_m": _pair(w["width"]),
+        "posse_pct": _pair(w["possession"], names),
+        "dominio_territorial_pct": _pair(w["tilt"], names),
+        "passes": _pair(w["passes"], names),
+        "precisao_passes_pct": _pair(w["passAccuracy"], names),
+        "perdas_de_bola": _pair(w["losses"], names),
+        "recupera_em_5s_pct": _pair(w["recoveries5s"], names),
+        "linha_defesa_m_do_proprio_gol": _pair(w["line"], names),
+        "distancia_defesa_ataque_m": _pair(w["depth"], names),
+        "largura_m": _pair(w["width"], names),
         "por_onde_ataca_pct": corridors,
     }
 
 
-def _recent_window(w: dict[str, Any]) -> dict[str, Any]:
+def _recent_window(w: dict[str, Any], names: tuple[str, str] = TEAM) -> dict[str, Any]:
     """Com pouco jogo analisado nos últimos 5 min, os números enganam: o modelo recebe só um aviso."""
     if w["seconds"] < MIN_RECENT_SECONDS:
         return {
             "minutos_de_jogo_analisados": round(w["seconds"] / 60, 1),
             "aviso": "pouco jogo analisado nos últimos 5 minutos; não tire conclusões desta janela, use a partida inteira",
         }
-    return _window(w)
+    return _window(w, names)
 
 
 def build_summary(stats: dict[str, Any], patterns: dict[str, Any] | None, alerts: list[str]) -> dict[str, Any]:
+    names = team_labels(stats)
     labels = {"gol": "gol", "amarelo": "cartão amarelo", "vermelho": "cartão vermelho", "substituicao": "substituição"}
     events = [
-        {"minuto": int(e["t"] // 60) + 1, "evento": labels.get(e["kind"], e["kind"]), "time": TEAM[e["team"]] if e["team"] is not None else None}
+        {"minuto": int(e["t"] // 60) + 1, "evento": labels.get(e["kind"], e["kind"]), "time": names[e["team"]] if e["team"] is not None else None}
         for e in stats["events"]
         if e["kind"] != "intervalo"
     ]
@@ -177,7 +184,7 @@ def build_summary(stats: dict[str, Any], patterns: dict[str, Any] | None, alerts
             if not pattern:
                 continue
             team, phase = key.split("-")
-            formations[f"{TEAM[int(team)]} {'atacando' if phase == 'ataque' else 'defendendo'}"] = {
+            formations[f"{names[int(team)]} {'atacando' if phase == 'ataque' else 'defendendo'}"] = {
                 "formacao": pattern.get("formation"),
                 "linha_defesa_m": pattern.get("lineHeight"),
                 "largura_m": pattern.get("width"),
@@ -185,11 +192,16 @@ def build_summary(stats: dict[str, Any], patterns: dict[str, Any] | None, alerts
     return {
         "minuto_no_app": int(stats["elapsedS"] // 60) + 1,
         "tempo": f"{stats['period']}º tempo",
-        "placar": f"{TEAM[0]} {stats['score'][0]} x {stats['score'][1]} {TEAM[1]}",
+        "placar": f"{names[0]} {stats['score'][0]} x {stats['score'][1]} {names[1]}",
         "eventos": events,
-        "ultimos_5_minutos": _recent_window(stats["windows"]["recentes"]),
-        "partida_inteira": _window(stats["windows"]["partida"]),
+        "ultimos_5_minutos": _recent_window(stats["windows"]["recentes"], names),
+        "partida_inteira": _window(stats["windows"]["partida"], names),
         "padroes": formations,
+        "movimentos_da_defesa_para_o_ataque": {
+            names[int(t)]: [h for h in (tr or {}).get("highlights", [])[:4]]
+            for t, tr in ((patterns or {}).get("transitions") or {}).items()
+            if tr
+        },
         "alertas_recentes": alerts[-6:],
     }
 
@@ -198,7 +210,7 @@ SYSTEM_PROMPT = (
     "Você é um analista tático de futebol. Recebe números aproximados, medidos por visão computacional numa "
     "transmissão de TV (a câmera não mostra o campo todo). Escreva em português do Brasil, com frases curtas e "
     "concretas. Use só o que está nos dados, cite números quando ajudarem e não invente jogadores, nomes ou "
-    "lances. Os times se chamam Time A e Time B. Esquerda e direita são do ponto de vista do time que ataca.\n"
+    "lances. Os times se chamam {time_a} e {time_b}. Esquerda e direita são do ponto de vista do time que ataca.\n"
     "Significado dos campos:\n"
     "- posse_pct: quanto tempo cada time ficou com a bola.\n"
     "- dominio_territorial_pct: quanto tempo a bola ficou no terço ofensivo de cada time.\n"
@@ -537,7 +549,7 @@ class InsightEngine:
         analysis = None
         try:
             content = self.ollama.chat(
-                model, SYSTEM_PROMPT, USER_PROMPT.format(data=json.dumps(summary, ensure_ascii=False)), RESPONSE_SCHEMA
+                model, SYSTEM_PROMPT.format(time_a=team_labels(stats)[0], time_b=team_labels(stats)[1]), USER_PROMPT.format(data=json.dumps(summary, ensure_ascii=False)), RESPONSE_SCHEMA
             )
             analysis = parse_analysis(content)
         except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:

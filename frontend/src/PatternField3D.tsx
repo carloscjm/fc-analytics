@@ -11,6 +11,14 @@ export interface PatternLayer {
   pattern: TeamPattern | null;
   color: string;
   mirror: boolean;
+  /** desenhado só como marcas no chão (por exemplo, onde cada posição fica defendendo) */
+  ghost?: boolean;
+}
+
+/** Seta no chão, em metros (time atacando para a direita). */
+export interface FieldArrow {
+  from: [number, number];
+  to: [number, number];
 }
 
 /** De quem é cada gol. O ataque vai sempre da esquerda para a direita. */
@@ -28,6 +36,9 @@ interface Props {
   mode: CameraMode;
   showHeat: boolean;
   ends: FieldEnds;
+  /** nome da posição (LE, ZAG, VOL...) em cima de cada jogador */
+  showRoles: boolean;
+  arrows?: FieldArrow[];
 }
 
 const MAX_LAYERS = 2;
@@ -261,6 +272,43 @@ function sectorOf(line: number, lineCount: number): keyof typeof sectorMaterials
   return "meio";
 }
 
+// ---------------------------------------------------------------------------
+// Etiquetas com o nome da posição
+// ---------------------------------------------------------------------------
+
+const labelMaterials = new Map<string, THREE.SpriteMaterial>();
+
+function labelMaterial(text: string, faded = false): THREE.SpriteMaterial {
+  const key = `${text}|${faded}`;
+  const cached = labelMaterials.get(key);
+  if (cached) return cached;
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = faded ? "rgba(11,13,10,0.45)" : "rgba(11,13,10,0.8)";
+  ctx.beginPath();
+  ctx.roundRect(4, 8, 120, 48, 14);
+  ctx.fill();
+  ctx.fillStyle = faded ? "rgba(255,255,255,0.75)" : "#ffffff";
+  ctx.font = "700 34px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 64, 33);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true });
+  labelMaterials.set(key, material);
+  return material;
+}
+
+/** Onde a etiqueta fica em relação ao pé do jogador: acima da cabeça (3D) ou logo acima dele na tela (de cima). */
+function labelOffset(mode: CameraMode): THREE.Vector3 {
+  return mode === "top" ? new THREE.Vector3(0, 8, -3.6) : new THREE.Vector3(0, 7.2, 0);
+}
+
+const ghostRing = new THREE.RingGeometry(1.1, 1.7, 32);
+
 /** Ordem estável das posições entre atualizações: por linha e, dentro dela, da esquerda para a direita. */
 function ordered(roles: PatternRole[]): PatternRole[] {
   return [...roles].sort((a, b) => a.line - b.line || a.y - b.y);
@@ -279,6 +327,8 @@ interface SceneState {
   figures: PlayerFigure[];
   targets: THREE.Vector3[];
   lines: THREE.Group;
+  marks: THREE.Group;
+  labels: THREE.Sprite[];
   heats: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[];
   field: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
 }
@@ -300,7 +350,7 @@ function placeCamera(state: SceneState, mode: CameraMode, width: number, height:
 }
 
 /** Campo 3D com o padrão de um time: posições médias, linhas da formação e mapa de calor. */
-export function PatternField3D({ layers, mode, showHeat, ends }: Props) {
+export function PatternField3D({ layers, mode, showHeat, ends, showRoles, arrows }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<SceneState | null>(null);
   const modeRef = useRef(mode);
@@ -348,6 +398,8 @@ export function PatternField3D({ layers, mode, showHeat, ends }: Props) {
 
     const lines = new THREE.Group();
     scene.add(lines);
+    const marks = new THREE.Group();
+    scene.add(marks);
 
     const state: SceneState = {
       renderer,
@@ -357,6 +409,8 @@ export function PatternField3D({ layers, mode, showHeat, ends }: Props) {
       figures: [],
       targets: [],
       lines,
+      marks,
+      labels: [],
       heats,
       field,
     };
@@ -366,6 +420,12 @@ export function PatternField3D({ layers, mode, showHeat, ends }: Props) {
       scene.add(figure.group);
       state.figures.push(figure);
       state.targets.push(new THREE.Vector3());
+      const label = new THREE.Sprite(labelMaterial("?"));
+      label.scale.set(5.6, 2.8, 1);
+      label.renderOrder = 10;
+      label.visible = false;
+      scene.add(label);
+      state.labels.push(label);
     }
     stateRef.current = state;
 
@@ -389,8 +449,10 @@ export function PatternField3D({ layers, mode, showHeat, ends }: Props) {
       const dt = Math.min((now - last) / 1000, 0.1);
       last = now;
       const k = 1 - Math.exp(-FOLLOW_RATE * dt);
+      const offset = labelOffset(modeRef.current);
       state.figures.forEach((figure, i) => {
         figure.group.position.lerp(state.targets[i], k);
+        state.labels[i].position.copy(figure.group.position).add(offset);
       });
       controls.update();
       renderer.render(scene, camera);
@@ -435,6 +497,13 @@ export function PatternField3D({ layers, mode, showHeat, ends }: Props) {
       state.lines.remove(child);
       (child as THREE.Line).geometry.dispose();
     }
+    // Marcas (posições fantasmas e setas): geometrias e materiais compartilhados ou descartados aqui.
+    for (const child of [...state.marks.children]) {
+      state.marks.remove(child);
+      if (child instanceof THREE.ArrowHelper) child.dispose();
+      else if (child instanceof THREE.Mesh) (child.material as THREE.Material).dispose();
+    }
+    const offset = labelOffset(mode);
 
     for (let layerIndex = 0; layerIndex < MAX_LAYERS; layerIndex++) {
       const layer = layers[layerIndex];
@@ -445,8 +514,27 @@ export function PatternField3D({ layers, mode, showHeat, ends }: Props) {
         const i = layerIndex * ROLES + k;
         const figure = state.figures[i];
         const role = roles[k];
-        if (!role || !layer) {
+        const label = state.labels[i];
+        if (!role || !layer || layer.ghost) {
           figure.group.visible = false;
+          label.visible = false;
+          if (role && layer?.ghost) {
+            // Posição "fantasma": um anel no chão na cor do time, com o nome da posição apagado.
+            const ring = new THREE.Mesh(
+              ghostRing,
+              new THREE.MeshBasicMaterial({ color: layer.color, transparent: true, opacity: 0.7, depthWrite: false }),
+            );
+            ring.rotation.x = -Math.PI / 2;
+            ring.position.copy(toScene(role.x, role.y, 0.05));
+            state.marks.add(ring);
+            if (showRoles && role.name) {
+              const ghostLabel = new THREE.Sprite(labelMaterial(role.name, true));
+              ghostLabel.scale.set(4.4, 2.2, 1);
+              ghostLabel.renderOrder = 9;
+              ghostLabel.position.copy(toScene(role.x, role.y, 0)).add(new THREE.Vector3(0, 2, mode === "top" ? -2.6 : 0));
+              state.marks.add(ghostLabel);
+            }
+          }
           continue;
         }
         state.targets[i].copy(toScene(role.x, role.y, 0));
@@ -455,11 +543,14 @@ export function PatternField3D({ layers, mode, showHeat, ends }: Props) {
         figure.group.rotation.y = layer.mirror ? Math.PI : 0;
         paint(figure, layer.color);
         figure.group.visible = true;
+        label.material = labelMaterial(role.name || "·");
+        label.visible = showRoles && !!role.name;
+        if (first || !label.visible) label.position.copy(state.targets[i]).add(offset);
       }
 
       // Linhas da formação: liga as posições de cada linha, de um lado ao outro,
       // em azul (defesa), amarelo (meio-campo) ou vermelho (ataque).
-      if (pattern && layer) {
+      if (pattern && layer && !layer.ghost) {
         const byLine = new Map<number, PatternRole[]>();
         for (const r of roles) byLine.set(r.line, [...(byLine.get(r.line) ?? []), r]);
         const lineCount = Math.max(...roles.map((r) => r.line)) + 1;
@@ -486,7 +577,17 @@ export function PatternField3D({ layers, mode, showHeat, ends }: Props) {
         heat.visible = false;
       }
     }
-  }, [layers, showHeat]);
+
+    // Setas: de onde cada posição fica defendendo até onde fica atacando.
+    for (const arrow of arrows ?? []) {
+      const from = toScene(arrow.from[0], arrow.from[1], 0.3);
+      const to = toScene(arrow.to[0], arrow.to[1], 0.3);
+      const dir = to.clone().sub(from);
+      const length = dir.length();
+      if (length < 1.5) continue;
+      state.marks.add(new THREE.ArrowHelper(dir.normalize(), from, length - 1.2, 0xffffff, 2.4, 1.5));
+    }
+  }, [layers, showHeat, showRoles, arrows, mode]);
 
   return <div ref={hostRef} className="map3d" />;
 }

@@ -6,6 +6,7 @@ import {
   type DetectionsMessage,
   type PatternOption,
   type PatternsInfo,
+  type PatternTransition,
   type MatchStats,
   type InsightsInfo,
   type TeamPattern,
@@ -15,7 +16,7 @@ import { chooseTab, FrameSender, type SenderCounters } from "./capture";
 import { DetectionOverlay, ROLE_COLORS, teamColors } from "./DetectionOverlay";
 import { InsightsPanel, type InsightCommand } from "./InsightsPanel";
 import { MatchPanel, type Command } from "./MatchPanel";
-import { PatternField3D, SECTOR_COLORS, type CameraMode, type FieldEnds, type PatternLayer } from "./PatternField3D";
+import { PatternField3D, SECTOR_COLORS, type CameraMode, type FieldArrow, type FieldEnds, type PatternLayer } from "./PatternField3D";
 import { RollingStats, type LiveStats } from "./stats";
 
 const INTERVALS = [100, 125, 150, 175, 200];
@@ -25,8 +26,10 @@ interface ViewPart {
   /** chave do padrão no backend: "<time>-<fase>" */
   option: string;
   team: 0 | 1;
-  /** gira o padrão para o outro lado do campo (o time que defende, quando os dois aparecem juntos) */
+  /** gira o padrão para o outro lado do campo (o time que defende) */
   mirror: boolean;
+  /** só marcas no chão (posições de defesa na opção defesa → ataque) */
+  ghost?: boolean;
 }
 
 interface View {
@@ -35,36 +38,93 @@ interface View {
   parts: ViewPart[];
   /** quem ataca nos momentos mostrados (sai do gol da esquerda) */
   attacker: 0 | 1;
+  /** defesa → ataque de um time */
+  transition?: 0 | 1;
 }
 
-const VIEWS: View[] = [
-  // Em todas as opções o ataque vai da esquerda para a direita: quem defende fica girado, protegendo o gol da direita.
-  { key: "0-ataque", title: "Time A ataca", attacker: 0, parts: [{ option: "0-ataque", team: 0, mirror: false }] },
-  { key: "0-defesa", title: "Time A defende", attacker: 1, parts: [{ option: "0-defesa", team: 0, mirror: true }] },
-  { key: "1-ataque", title: "Time B ataca", attacker: 1, parts: [{ option: "1-ataque", team: 1, mirror: false }] },
-  { key: "1-defesa", title: "Time B defende", attacker: 0, parts: [{ option: "1-defesa", team: 1, mirror: true }] },
-  {
-    key: "A-x-B",
-    title: "A ataca × B defende",
-    attacker: 0,
-    parts: [
-      { option: "0-ataque", team: 0, mirror: false },
-      { option: "1-defesa", team: 1, mirror: true },
-    ],
-  },
-  {
-    key: "B-x-A",
-    title: "B ataca × A defende",
-    attacker: 1,
-    parts: [
-      { option: "1-ataque", team: 1, mirror: false },
-      { option: "0-defesa", team: 0, mirror: true },
-    ],
-  },
-];
+type Names = [string, string];
 
-function teamName(team: 0 | 1): string {
-  return team === 0 ? "Time A" : "Time B";
+/** As opções do campo, com os nomes dos times (siglas do placar ou "Time A"/"Time B"). */
+function buildViews(names: Names): View[] {
+  const [a, b] = names;
+  // Em todas as opções o ataque vai da esquerda para a direita: quem defende fica girado, protegendo o gol da direita.
+  return [
+    { key: "0-ataque", title: `${a} ataca`, attacker: 0, parts: [{ option: "0-ataque", team: 0, mirror: false }] },
+    { key: "0-defesa", title: `${a} defende`, attacker: 1, parts: [{ option: "0-defesa", team: 0, mirror: true }] },
+    { key: "1-ataque", title: `${b} ataca`, attacker: 1, parts: [{ option: "1-ataque", team: 1, mirror: false }] },
+    { key: "1-defesa", title: `${b} defende`, attacker: 0, parts: [{ option: "1-defesa", team: 1, mirror: true }] },
+    {
+      key: "A-x-B",
+      title: `${a} ataca × ${b} defende`,
+      attacker: 0,
+      parts: [
+        { option: "0-ataque", team: 0, mirror: false },
+        { option: "1-defesa", team: 1, mirror: true },
+      ],
+    },
+    {
+      key: "B-x-A",
+      title: `${b} ataca × ${a} defende`,
+      attacker: 1,
+      parts: [
+        { option: "1-ataque", team: 1, mirror: false },
+        { option: "0-defesa", team: 0, mirror: true },
+      ],
+    },
+    ...([0, 1] as const).map((t) => ({
+      key: `${t}-trans`,
+      title: `${names[t]}: defesa → ataque`,
+      attacker: t,
+      transition: t,
+      parts: [
+        { option: `${t}-defesa`, team: t, mirror: false, ghost: true },
+        { option: `${t}-ataque`, team: t, mirror: false },
+      ],
+    })),
+  ];
+}
+
+const SECTOR_TEXT = { defesa: "na linha de defesa", meio: "no meio-campo", ataque: "no ataque" } as const;
+
+function TransitionStats({ transition, name }: { transition: PatternTransition; name: string }) {
+  const moves = [...transition.moves].sort((m1, m2) => m2.dx - m1.dx);
+  return (
+    <div className="transition">
+      <ul className="highlights">
+        {transition.highlights.map((h, i) => (
+          <li key={i}>{h}</li>
+        ))}
+      </ul>
+      <table className="compare moves">
+        <caption className="muted small">
+          Quanto cada posição do {name} se move quando o time passa da defesa para o ataque
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Posição</th>
+            <th scope="col">Avança</th>
+            <th scope="col">Para o lado</th>
+            <th scope="col">No ataque fica</th>
+          </tr>
+        </thead>
+        <tbody>
+          {moves.map((m, i) => (
+            <tr key={i}>
+              <th scope="row">{m.name}</th>
+              <td>
+                {m.dx >= 0 ? "+" : ""}
+                {Math.round(m.dx)} m
+              </td>
+              <td>
+                {Math.abs(m.dy) < 3 ? "—" : `${Math.round(Math.abs(m.dy))} m para a ${m.dy > 0 ? "direita" : "esquerda"}`}
+              </td>
+              <td>{m.attackSector ? SECTOR_TEXT[m.attackSector] : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function PatternStats({ option, pattern, heading }: { option: PatternOption; pattern: TeamPattern; heading?: string }) {
@@ -143,6 +203,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [cameraMode, setCameraMode] = useState<CameraMode>("top");
   const [showHeat, setShowHeat] = useState(false);
+  const [showRoles, setShowRoles] = useState(true);
   const [selected, setSelected] = useState<string>("0-ataque");
   const [patterns, setPatterns] = useState<PatternsInfo | null>(null);
   const [matchStats, setMatchStats] = useState<MatchStats | null>(null);
@@ -280,7 +341,10 @@ export default function App() {
   const field = result?.map ?? null;
   const pitchState = server?.pitch?.state;
 
-  const view = VIEWS.find((v) => v.key === selected) ?? VIEWS[0];
+  const names: Names = matchStats?.teamNames ?? ["Time A", "Time B"];
+  const teamName = (team: 0 | 1) => names[team];
+  const views = buildViews(names);
+  const view = views.find((v) => v.key === selected) ?? views[0];
   const viewParts = view.parts.map((part) => ({ part, option: patterns?.options[part.option] ?? null }));
   const layers: PatternLayer[] = useMemo(
     () =>
@@ -288,21 +352,32 @@ export default function App() {
         pattern: patterns?.options[part.option]?.pattern ?? null,
         color: colors[part.team],
         mirror: part.mirror,
+        ghost: part.ghost,
       })),
-    [view, patterns, colors],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [view.key, patterns, colors],
+  );
+  const transition = view.transition !== undefined ? (patterns?.transitions?.[String(view.transition)] ?? null) : null;
+  const arrows: FieldArrow[] = useMemo(
+    () => (transition ? transition.moves.map((m) => ({ from: m.from, to: m.to })) : []),
+    [transition],
   );
   const missing = viewParts.filter(({ option }) => !option?.pattern);
   const attacker = view.attacker;
   const defender: 0 | 1 = attacker === 0 ? 1 : 0;
   const ends: FieldEnds = useMemo(
     () => ({
-      left: { label: `gol do ${teamName(attacker)}`, color: colors[attacker] },
-      right: { label: `gol do ${teamName(defender)}`, color: colors[defender] },
-      center: `${teamName(attacker)} ataca  →  ${teamName(defender)} defende`,
+      left: { label: `gol do ${names[attacker]}`, color: colors[attacker] },
+      right: { label: `gol do ${names[defender]}`, color: colors[defender] },
+      center:
+        view.transition !== undefined
+          ? `${names[attacker]}: anéis = defendendo  →  jogadores = atacando`
+          : `${names[attacker]} ataca  →  ${names[defender]} defende`,
     }),
-    [attacker, defender, colors],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [attacker, defender, colors, names[0], names[1], view.transition],
   );
-  const duo = view.parts.length > 1;
+  const duo = view.parts.length > 1 && view.transition === undefined;
 
   let fieldNote = "Aguardando a captura";
   if (pitchState === "baixando") fieldNote = "Baixando o modelo do campo (cerca de 140 MB, só na primeira vez)...";
@@ -331,6 +406,10 @@ export default function App() {
             </button>
           </div>
           <label className="check">
+            <input type="checkbox" checked={showRoles} onChange={(e) => setShowRoles(e.target.checked)} />
+            Posições
+          </label>
+          <label className="check">
             <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} />
             Mapa de calor
           </label>
@@ -341,7 +420,7 @@ export default function App() {
       </div>
 
       <div className="options" role="tablist">
-        {VIEWS.map((v) => {
+        {views.map((v) => {
           const opts = v.parts.map((part) => patterns?.options[part.option]);
           const progress = Math.min(...opts.map((o) => (o ? Math.min(1, o.frames / o.needed) : 0)));
           const done = opts.every((o) => o?.pattern);
@@ -361,9 +440,11 @@ export default function App() {
               <span className="option-text">
                 <strong>{v.title}</strong>
                 <span className="muted small">
-                  {done
-                    ? opts.map((o) => o!.pattern!.formation).join(" × ")
-                    : `coletando ${Math.round(progress * 100)}%`}
+                  {!done
+                    ? `coletando ${Math.round(progress * 100)}%`
+                    : v.transition !== undefined
+                      ? opts.map((o) => o!.pattern!.formation).join(" → ")
+                      : opts.map((o) => o!.pattern!.formation).join(" × ")}
                 </span>
               </span>
             </button>
@@ -372,14 +453,28 @@ export default function App() {
       </div>
 
       <div className="map-wrap">
-        <PatternField3D layers={layers} mode={cameraMode} showHeat={showHeat} ends={ends} />
+        <PatternField3D
+          layers={layers}
+          mode={cameraMode}
+          showHeat={showHeat}
+          ends={ends}
+          showRoles={showRoles}
+          arrows={arrows}
+        />
         <div className="legend">
-          {view.parts.map((part) => (
-            <span key={part.option}>
-              <span className="swatch" style={{ background: colors[part.team] }} />
-              {teamName(part.team)} {part.mirror ? "defendendo o gol da direita" : "atacando →"}
+          {view.transition !== undefined ? (
+            <span>
+              <span className="swatch" style={{ background: colors[view.transition] }} />
+              {teamName(view.transition)}: ○ defendendo → atacando
             </span>
-          ))}
+          ) : (
+            view.parts.map((part) => (
+              <span key={part.option}>
+                <span className="swatch" style={{ background: colors[part.team] }} />
+                {teamName(part.team)} {part.mirror ? "defendendo o gol da direita" : "atacando →"}
+              </span>
+            ))
+          )}
         </div>
         <div className="legend sectors">
           {(Object.entries(SECTOR_COLORS) as [string, string][]).map(([name, color]) => (
@@ -410,7 +505,11 @@ export default function App() {
         )}
       </div>
 
-      {missing.length === 0 && (
+      {missing.length === 0 && view.transition !== undefined && transition && (
+        <TransitionStats transition={transition} name={teamName(view.transition)} />
+      )}
+
+      {missing.length === 0 && view.transition === undefined && (
         <div className={duo ? "stats-duo" : ""}>
           {viewParts.map(({ part, option }) => (
             <PatternStats
@@ -552,6 +651,7 @@ export default function App() {
           <InsightsPanel
             info={insights}
             colors={colors}
+            names={names}
             send={sendCommand}
             wide={insightsWide}
             onToggleWide={toggleInsightsWide}

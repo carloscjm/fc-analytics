@@ -26,10 +26,11 @@ import numpy as np
 from .ball import BallTracker
 from .patterns import PatternStore
 from .insights import InsightEngine
+from .teamnames import TeamNameReader, TeamNames, clean_names
 from .stats import MatchStore, StatsTracker, default_data_dir
 from .fieldmap import FieldMap
-from .pitch import LAST_FIT, CutDetector, HomographyTracker, Keypoints, is_close_up, visible_area
-from .teams import OUTLIER, TeamClassifier, jersey_feature
+from .pitch import LAST_FIT, CutDetector, HomographyTracker, Keypoints, is_close_up, keypoints_on_grass, visible_area
+from .teams import OUTLIER, PLAYER_LABEL_TOLERANCE, TeamClassifier, jersey_feature
 
 log = logging.getLogger("fc-analytics")
 
@@ -97,6 +98,10 @@ class Pipeline:
         self.stats = StatsTracker(store)
         # Insights da Fase 5: alertas por regra e análises do LLM local (Ollama).
         self.insights = InsightEngine(store, settings_path=default_data_dir() / "llm.json")
+        # Nomes dos times lidos do placar (ou digitados), presos à cor da camisa.
+        self.name_reader = TeamNameReader()
+        self.names_lock = threading.Lock()
+        self.team_names = self._load_names()
         self.stats_latest: dict[str, Any] | None = None
         self.stats_version = 0
         self.stats_sent = -1
@@ -190,7 +195,8 @@ class Pipeline:
             if label in ("pessoa", "jogador"):
                 feature = jersey_feature(image, box)
                 if feature is not None:
-                    features.append((tid if tid >= 0 else None, feature))
+                    tolerance = PLAYER_LABEL_TOLERANCE if label == "jogador" else 1.0
+                    features.append((tid if tid >= 0 else None, feature, tolerance))
                     direct_feature[i] = feature
         self.teams.observe_frame(features, ts, wide)
 
@@ -204,7 +210,9 @@ class Pipeline:
                     team_vote = self.teams.team_of(tid)
                 elif self.teams.model is not None and i in direct_feature:
                     # Ainda sem ID confirmado: classifica só por este frame.
-                    team_vote = self.teams.model.classify(direct_feature[i])
+                    team_vote = self.teams.model.classify(
+                        direct_feature[i], PLAYER_LABEL_TOLERANCE if label == "jogador" else 1.0
+                    )
                 else:
                     team_vote = None
                 if team_vote == OUTLIER:
@@ -234,6 +242,8 @@ class Pipeline:
 
         # Campo: closes e frames sem pontos-chave suficientes pausam o mapa.
         close = is_close_up(people, height)
+        if keypoints is not None:
+            keypoints = keypoints_on_grass(image, keypoints)
         view = None if close else self.homography.update(keypoints, width, height, ts)
         if close:
             self.homography.reset()
@@ -247,6 +257,8 @@ class Pipeline:
             scene = "sem campo"
         self.map.update(view.h if view is not None else None, tracked_boxes, ts, scene)
         snapshot = self.map.snapshot(ts)
+        if wide and self.team_names.source != "manual":
+            self.name_reader.maybe_read(image, on_done=self._update_names)
         if view is not None and view.fresh:
             self.patterns.observe(snapshot, ts)
             self.stats.observe(snapshot, self.patterns.side.team0_defends_left(), time.time())
@@ -353,7 +365,10 @@ class Pipeline:
         threading.Thread(target=work, daemon=True).start()
 
     def refresh_stats(self) -> dict[str, Any]:
-        self.stats_latest = self.stats.summary()
+        summary = self.stats.summary()
+        summary["teamNames"] = self.team_labels()
+        summary["teamNamesSource"] = self.team_names.source
+        self.stats_latest = summary
         self.stats_version += 1
         try:
             self.insights.on_stats(self.stats_latest, self.patterns_latest)
@@ -365,10 +380,80 @@ class Pipeline:
         return self.stats_latest if self.stats_latest is not None else self.refresh_stats()
 
     def new_match(self) -> None:
-        """Partida nova: estatísticas, eventos e padrões dos times recomeçam."""
+        """Partida nova: estatísticas, eventos, padrões e nomes dos times recomeçam."""
         self.stats.new_match()
+        with self.names_lock:
+            self.team_names = TeamNames()
+            self.name_reader.reset()
         self.reset_patterns()
         self.refresh_stats()
+
+    # ---------- nomes dos times ----------
+
+    def _team_colors(self) -> list[str] | None:
+        return self.teams.info().get("colors")
+
+    def _load_names(self) -> TeamNames:
+        store = self.stats.store
+        if store is None:
+            return TeamNames()
+        try:
+            return TeamNames.from_json(store.get_meta(self.stats.match_id, "team_names"))
+        except Exception:  # noqa: BLE001
+            log.exception("nomes dos times ilegíveis")
+            return TeamNames()
+
+    def _save_names(self) -> None:
+        if self.stats.store is not None:
+            self.stats.store.set_meta(self.stats.match_id, "team_names", self.team_names.to_json())
+
+    def _update_names(self) -> None:
+        """Chamado depois de cada leitura do placar."""
+        colors = self._team_colors()
+        with self.names_lock:
+            if self.team_names.source == "manual":
+                return
+            decided = self.name_reader.decide(colors)
+            changed = False
+            if decided is not None and sorted(decided.names) != sorted(self.team_names.names):
+                self.team_names = decided
+                changed = True
+            elif self.team_names.names and self.team_names.anchors is None and colors:
+                # Os nomes chegaram antes da calibração das cores: prende agora, na ordem atual.
+                self.team_names.anchors = list(colors)
+                changed = True
+            if changed:
+                self._save_names()
+                self.stats_next = 0.0  # manda os nomes novos na próxima atualização
+
+    def team_labels(self) -> list[str]:
+        with self.names_lock:
+            ordered = self.team_names.ordered(self._team_colors())
+        return [ordered[t] or ("Time A", "Time B")[t] for t in (0, 1)]
+
+    def set_team_names(self, names: list[Any]) -> None:
+        """Nomes digitados à mão, na ordem dos times atuais. O placar não muda mais esses nomes."""
+        clean = clean_names(names)
+        with self.names_lock:
+            self.team_names = TeamNames(names=clean, anchors=self._team_colors(), source="manual")
+            self._save_names()
+
+    def swap_team_names(self) -> None:
+        with self.names_lock:
+            ordered = self.team_names.ordered(self._team_colors())
+            if not all(ordered):
+                return
+            self.team_names = TeamNames(
+                names=[ordered[1], ordered[0]], anchors=self._team_colors(), source=self.team_names.source or "placar"
+            )
+            self._save_names()
+
+    def auto_team_names(self) -> None:
+        """Volta a usar o placar."""
+        with self.names_lock:
+            self.team_names = TeamNames()
+            self.name_reader.reset()
+            self._save_names()
 
     def recalibrate_teams(self) -> None:
         with self._lock:

@@ -150,3 +150,12 @@ def test_small_players_keep_ids_with_pan_and_jitter():
     total_ids = len(pipe.lives) + len(pipe.ended_lifetimes)
     assert total_ids <= 24  # 20 jogadores: quase nenhum ID novo depois de começar
     assert seen[-1]["tracking"]["active"] >= 18
+
+
+def test_tolerance_keeps_players_with_odd_colors_in_their_team():
+    from app.teams import OUTLIER, TeamModel
+
+    model = TeamModel(centers=np.array([[200, 128, 128], [60, 128, 160]], dtype=np.float32), spreads=np.array([6.0, 6.0]))
+    shadowed = np.array([170, 128, 128], dtype=np.float32)  # 30 de distância do time 0
+    assert model.classify(shadowed) == OUTLIER
+    assert model.classify(shadowed, tolerance=1.8) == 0

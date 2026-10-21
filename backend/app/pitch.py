@@ -125,6 +125,40 @@ class Keypoints:
     infer_ms: float
 
 
+# Gramado em HSV (OpenCV: matiz 0-180). Pontos do campo ficam sempre sobre a grama ou as linhas brancas.
+GRASS_HSV_LOW = np.array([30, 40, 40], dtype=np.uint8)
+GRASS_HSV_HIGH = np.array([90, 255, 255], dtype=np.uint8)
+GRASS_SCALE = 0.25
+GRASS_RADIUS = 0.025  # vizinhança, em fração da largura da imagem
+GRASS_MIN_SHARE = 0.25
+
+
+def keypoints_on_grass(image: np.ndarray, keypoints: Keypoints) -> Keypoints:
+    """Zera a confiança dos pontos achados fora do gramado (barras pretas, placar, menus da página).
+
+    O modelo do campo às vezes "acha" pontos em áreas que não são campo, como a
+    faixa preta ao lado do vídeo; com eles, o encaixe do campo sai torto e todas
+    as posições em metros ficam deslocadas.
+    """
+    small = cv2.resize(image, None, fx=GRASS_SCALE, fy=GRASS_SCALE, interpolation=cv2.INTER_AREA)
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    grass = cv2.inRange(hsv, GRASS_HSV_LOW, GRASS_HSV_HIGH)
+    h, w = grass.shape
+    r = max(2, int(GRASS_RADIUS * w))
+    conf = keypoints.conf.copy()
+    for i, (x, y) in enumerate(keypoints.xy):
+        if conf[i] <= 0:
+            continue
+        cx, cy = int(x * GRASS_SCALE), int(y * GRASS_SCALE)
+        if not (0 <= cx < w and 0 <= cy < h):
+            conf[i] = 0.0
+            continue
+        patch = grass[max(0, cy - r) : cy + r + 1, max(0, cx - r) : cx + r + 1]
+        if patch.size == 0 or float(np.count_nonzero(patch)) / patch.size < GRASS_MIN_SHARE:
+            conf[i] = 0.0
+    return Keypoints(xy=keypoints.xy, conf=conf, infer_ms=keypoints.infer_ms)
+
+
 class PitchDetector:
     def __init__(self, models_dir: Path, device: str, half: bool) -> None:
         self.models_dir = models_dir

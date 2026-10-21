@@ -7,3 +7,11 @@ ultralytics>=8.4.183
 supervision>=0.31
 trackers>=2.6
 gdown>=5.2
+# Leitura do placar (nomes dos times). O RapidOCR em si é instalado sem dependências pelo instalar.bat e
+# pelo iniciar.bat, porque ele pede o opencv-python-headless, que brigaria com o opencv-python acima.
+onnxruntime>=1.20
+pyclipper>=1.3
+shapely>=2.0
+omegaconf>=2.3
+colorlog>=6.8
+pyyaml>=6.0

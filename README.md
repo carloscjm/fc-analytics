@@ -73,6 +73,20 @@ O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time e
 - **Limite:** a câmera da TV não mostra o campo inteiro, então as médias usam quem aparece na imagem (e quem saiu há até 2 s). É uma aproximação que melhora com mais minutos de jogo.
 - **Diagnóstico:** `localhost:8000/debug/patterns`.
 
+## Quem é quem e nomes dos times
+
+- **Nomes dos times:** o app lê o placar da transmissão com um leitor de texto local (RapidOCR, Apache 2.0, roda na CPU) e usa as siglas, como MCI e PSG, em toda a página, nos alertas e na análise do LLM. Ele procura duas siglas lado a lado (com o placar no meio) ou uma embaixo da outra, e só confirma depois de ler o mesmo par 3 vezes. A sigla fica presa à cor da camisa; se ficar na cor errada, use **⇄ Trocar** no placar do painel. **Editar** permite digitar os nomes (aí o placar não muda mais); **Ler do placar** volta ao automático.
+- **Nome das posições:** cada jogador do campinho mostra a posição (LE, ZAG, LD, VOL, MC, ME, MD, MEI, PE, PD, CA; ALE e ALD com três zagueiros), deduzida da linha em que está e do lado do campo. No padrão de ataque, cada posição mantém o nome que tem na defesa: o lateral que sobe até o meio continua "LE". A opção **Posições** liga e desliga as etiquetas.
+- **Defesa → ataque:** uma opção para cada time mostra onde cada posição fica defendendo (anéis) e para onde vai atacando (jogadores), com setas. Embaixo, frases sobre os movimentos mais claros (lateral que apoia ou fica, volante que recua para perto dos zagueiros, pontas que fecham para o meio) e uma tabela com quanto cada posição avança e em que linha fica no ataque.
+- **Limite:** as posições são médias de quem ocupa cada região, não jogadores identificados. A câmera mostra só parte do campo e os IDs recomeçam a cada corte.
+
+## Limpeza da análise
+
+- **Campo:** pontos do campo achados fora do gramado (faixas pretas, placar, menus da página) são descartados antes do encaixe do campo.
+- **Fora das linhas:** quem está a mais de 1,5 m fora do campo (banco, gandulas, técnico) não entra no mapa nem nos padrões.
+- **Goleiro:** só vale perto do próprio gol (até 30 m) e um por time; os outros "goleiros" viram jogadores de linha.
+- **Cores:** quem o modelo de futebol chama de jogador pode ter a cor mais diferente da do time (sombra, sol) antes de virar "árbitro/goleiro".
+
 ## Estatísticas da partida (Fase 4)
 
 - **Gravação:** cada momento de jogo em tomada aberta vai para `backend/data/partidas.sqlite` (posições de todos os jogadores, bola, medidas do momento, passes, perdas e eventos). Se o backend reiniciar, a partida continua de onde parou. Depois de 4 horas sem jogo, começa uma partida nova sozinha; o botão **Nova partida** zera na hora (estatísticas, eventos e padrões).
@@ -139,6 +153,9 @@ Componentes e licenças conferidos em 20/10/2026:
 | Modelo de pontos do campo (roboflow/sports, YOLOv8 pose) | AGPL-3.0 |
 | Apache ECharts | Apache 2.0 |
 | SQLite | domínio público |
+| RapidOCR (leitura do placar) | Apache 2.0 |
+| ONNX Runtime | MIT |
+| SciPy | BSD-3-Clause |
 | Ollama | MIT |
 | Qwen3 (pesos) | Apache 2.0 |
 

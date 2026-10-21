@@ -56,6 +56,8 @@ export interface PatternRole {
   /** linha: 0 = defesa, a última = ataque */
   line: number;
   share: number;
+  /** nome da posição: LE, ZAG, LD, VOL, MC, MEI, PE, PD, CA... */
+  name?: string;
 }
 
 export interface TeamPattern {
@@ -80,10 +82,29 @@ export interface PatternOption {
   pattern: TeamPattern | null;
 }
 
+export interface PatternMove {
+  name: string;
+  attackName: string;
+  /** em que linha a posição fica quando o time ataca */
+  attackSector?: "defesa" | "meio" | "ataque";
+  from: [number, number];
+  to: [number, number];
+  dx: number;
+  dy: number;
+}
+
+export interface PatternTransition {
+  moves: PatternMove[];
+  teamShift: number;
+  highlights: string[];
+}
+
 export interface PatternsInfo {
   options: Record<string, PatternOption>;
   phaseSource: { bola: number; "avanço": number; "sem fase": number };
   team0DefendsLeft: boolean | null;
+  /** defesa → ataque de cada time ("0" e "1") */
+  transitions?: Record<string, PatternTransition | null>;
 }
 
 export type Pair<T> = [T, T];
@@ -130,6 +151,9 @@ export interface MatchStats {
     possession: (Pair<number> | null)[];
     line: Pair<(number | null)[]>;
   };
+  /** siglas lidas do placar ou digitadas; "Time A"/"Time B" enquanto não houver */
+  teamNames?: [string, string];
+  teamNamesSource?: "placar" | "manual" | null;
 }
 
 export interface InsightAnalysis {
