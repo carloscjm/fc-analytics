@@ -147,6 +147,24 @@ export default function App() {
   const [patterns, setPatterns] = useState<PatternsInfo | null>(null);
   const [matchStats, setMatchStats] = useState<MatchStats | null>(null);
   const [insights, setInsights] = useState<InsightsInfo | null>(null);
+  // Coluna dos insights larga ou estreita; lembrada neste navegador.
+  const [insightsWide, setInsightsWide] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("fca-insights-wide") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleInsightsWide = useCallback(() => {
+    setInsightsWide((wide) => {
+      try {
+        localStorage.setItem("fca-insights-wide", wide ? "0" : "1");
+      } catch {
+        // sem armazenamento: só não lembra a escolha
+      }
+      return !wide;
+    });
+  }, []);
   const [showPitch, setShowPitch] = useState(true);
   const [autoCrop, setAutoCrop] = useState(true);
 
@@ -502,7 +520,7 @@ export default function App() {
 
       {(notice || busyText) && <div className={`banner ${server?.state === "erro" ? "bad" : ""}`}>{notice ?? busyText}</div>}
 
-      <main className="layout">
+      <main className={`layout ${insightsWide ? "wide-insights" : ""}`}>
         <div className="main-col">
         {patternCard}
         <MatchPanel stats={matchStats} colors={colors} send={sendCommand} />
@@ -531,7 +549,13 @@ export default function App() {
         </div>
 
         <aside className="panel">
-          <InsightsPanel info={insights} colors={colors} send={sendCommand} />
+          <InsightsPanel
+            info={insights}
+            colors={colors}
+            send={sendCommand}
+            wide={insightsWide}
+            onToggleWide={toggleInsightsWide}
+          />
           <section className="card">
             <h2>Desempenho</h2>
             <dl>

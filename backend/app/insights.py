@@ -417,6 +417,30 @@ class InsightEngine:
         self.items.append(item)
         self.version += 1
 
+    # ---- limpar o feed ----
+
+    def remove(self, item_id: int) -> bool:
+        """Apaga um item do feed (alerta ou análise). O tempo de espera dos alertas continua valendo."""
+        with self._lock:
+            before = len(self.items)
+            self.items = [i for i in self.items if i.get("id") != item_id]
+            if len(self.items) == before:
+                return False
+            if self.store and self.match_id is not None:
+                self.store.delete_insights(self.match_id, [item_id])
+            self.version += 1
+            return True
+
+    def clear(self) -> int:
+        """Apaga o feed inteiro da partida atual."""
+        with self._lock:
+            removed = len(self.items)
+            self.items = []
+            if self.store and self.match_id is not None:
+                self.store.delete_insights(self.match_id)
+            self.version += 1
+            return removed
+
     # ---- a cada atualização das estatísticas ----
 
     def on_stats(self, stats: dict[str, Any], patterns: dict[str, Any] | None) -> None:

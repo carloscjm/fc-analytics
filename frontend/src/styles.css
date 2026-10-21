@@ -992,3 +992,66 @@ kbd {
   margin: 2px 0;
   line-height: 1.4;
 }
+
+.insights-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.insights-head h2 {
+  margin: 0;
+}
+
+.insights-tools {
+  display: flex;
+  gap: 12px;
+}
+
+.insights-tools .link {
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.insight-head .remove {
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  margin: -2px -4px -2px 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.insight-head .remove:hover,
+.insight-head .remove:focus-visible {
+  background: var(--border);
+  color: var(--text);
+}
+
+/* Coluna dos insights expandida: mais larga e mais alta, com letra um pouco maior. */
+@media (min-width: 901px) {
+  .layout.wide-insights {
+    grid-template-columns: minmax(0, 1fr) min(640px, 46vw);
+  }
+
+  .wide-insights .insights-feed {
+    max-height: calc(100vh - 230px);
+  }
+
+  .wide-insights .insight {
+    font-size: 14.5px;
+    padding: 12px 14px;
+  }
+
+  .wide-insights .insight p,
+  .wide-insights .insight-section li {
+    line-height: 1.55;
+  }
+}

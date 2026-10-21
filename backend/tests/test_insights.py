@@ -239,3 +239,28 @@ def test_insights_are_saved_with_the_match(tmp_path):
     again.bind_match(match_id)
     items = again.snapshot()["items"]
     assert len(items) == 1 and items[0]["rule"] == "posse"
+
+
+def test_remove_and_clear_feed(tmp_path):
+    store = MatchStore(tmp_path / "partidas.sqlite")
+    match_id = store.new_match(0.0)
+    clock = Clock()
+    engine = InsightEngine(store=store, ollama=FakeOllama(installed=()), clock=clock)
+    hot = stats(window(possession=[70.0, 30.0], tilt=[75.0, 25.0]), match_id=match_id)
+    engine.on_stats(hot, None)
+    items = engine.snapshot()["items"]
+    assert len(items) == 2
+    assert engine.remove(items[0]["id"]) is True
+    assert engine.remove(9999) is False
+    assert [i["id"] for i in engine.snapshot()["items"]] == [items[1]["id"]]
+    # Apagado também no banco.
+    again = InsightEngine(store=store, ollama=FakeOllama(installed=()), clock=clock)
+    again.bind_match(match_id)
+    assert len(again.snapshot()["items"]) == 1
+    # Limpar tudo não faz os mesmos alertas voltarem na hora (o tempo de espera continua).
+    assert engine.clear() == 1
+    engine.on_stats(hot, None)
+    assert engine.snapshot()["items"] == []
+    fresh = InsightEngine(store=store, ollama=FakeOllama(installed=()), clock=clock)
+    fresh.bind_match(match_id)
+    assert fresh.snapshot()["items"] == []

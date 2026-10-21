@@ -7,12 +7,17 @@ export type InsightCommand =
   | { type: "llm_analyze_now" }
   | { type: "llm_pull"; model?: string }
   | { type: "llm_set_model"; model: string }
-  | { type: "llm_set_interval"; seconds: number };
+  | { type: "llm_set_interval"; seconds: number }
+  | { type: "insight_delete"; id: number }
+  | { type: "insights_clear" };
 
 interface Props {
   info: InsightsInfo | null;
   colors: [string, string];
   send: (command: InsightCommand) => void;
+  /** coluna larga, para ler as análises com calma */
+  wide: boolean;
+  onToggleWide: () => void;
 }
 
 function clock(ms: number): string {
@@ -147,7 +152,15 @@ function LlmStatus({ llm, send }: { llm: LlmInfo; send: Props["send"] }) {
   );
 }
 
-function Item({ item, colors }: { item: InsightItem; colors: [string, string] }) {
+function RemoveButton({ onRemove, what }: { onRemove: () => void; what: string }) {
+  return (
+    <button className="remove" onClick={onRemove} aria-label={`Apagar ${what}`} title={`Apagar ${what}`}>
+      ×
+    </button>
+  );
+}
+
+function Item({ item, colors, onRemove }: { item: InsightItem; colors: [string, string]; onRemove: () => void }) {
   const when = `${clock(item.wall)} · ${Math.floor(item.t / 60) + 1}'`;
   if (item.kind === "analise" && item.analysis) {
     const a = item.analysis;
@@ -161,6 +174,7 @@ function Item({ item, colors }: { item: InsightItem; colors: [string, string] })
         <div className="insight-head">
           <span className="badge">Análise</span>
           <span className="muted small">{when}</span>
+          <RemoveButton onRemove={onRemove} what="esta análise" />
         </div>
         <p>{a.leitura}</p>
         {sections
@@ -193,6 +207,7 @@ function Item({ item, colors }: { item: InsightItem; colors: [string, string] })
           </span>
         )}
         <span className="muted small">{when}</span>
+        <RemoveButton onRemove={onRemove} what="este alerta" />
       </div>
       <p>{item.text}</p>
     </li>
@@ -200,11 +215,36 @@ function Item({ item, colors }: { item: InsightItem; colors: [string, string] })
 }
 
 /** Feed de insights: alertas por regra na hora e a análise do LLM local a cada poucos minutos. */
-export function InsightsPanel({ info, colors, send }: Props) {
+export function InsightsPanel({ info, colors, send, wide, onToggleWide }: Props) {
   const items = [...(info?.items ?? [])].reverse();
+  const [confirmClear, setConfirmClear] = useState(false);
+  useEffect(() => {
+    if (!confirmClear) return;
+    const timer = window.setTimeout(() => setConfirmClear(false), 4000);
+    return () => window.clearTimeout(timer);
+  }, [confirmClear]);
   return (
     <section className="card insights-card">
-      <h2>Insights e dicas</h2>
+      <div className="insights-head">
+        <h2>Insights e dicas</h2>
+        <div className="insights-tools">
+          {items.length > 0 && (
+            <button
+              className={`link ${confirmClear ? "danger" : ""}`}
+              onClick={() => {
+                if (!confirmClear) return setConfirmClear(true);
+                setConfirmClear(false);
+                send({ type: "insights_clear" });
+              }}
+            >
+              {confirmClear ? "Clique de novo para limpar" : "Limpar tudo"}
+            </button>
+          )}
+          <button className="link expand" onClick={onToggleWide} aria-pressed={wide}>
+            {wide ? "Recolher ⇥" : "⇤ Expandir"}
+          </button>
+        </div>
+      </div>
       {info ? <LlmStatus llm={info.llm} send={send} /> : <p className="muted small">Aguardando o backend...</p>}
       {items.length === 0 ? (
         <p className="muted small insights-empty">
@@ -215,7 +255,12 @@ export function InsightsPanel({ info, colors, send }: Props) {
       ) : (
         <ol className="insights-feed" aria-live="polite">
           {items.map((item) => (
-            <Item key={item.id} item={item} colors={colors} />
+            <Item
+              key={item.id}
+              item={item}
+              colors={colors}
+              onRemove={() => send({ type: "insight_delete", id: item.id })}
+            />
           ))}
         </ol>
       )}

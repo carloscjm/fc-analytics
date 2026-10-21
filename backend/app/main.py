@@ -571,6 +571,20 @@ async def handle_command(
         if kind == "new_match":
             await broadcast(websocket.app, {"type": "patterns", **pipeline.latest_patterns()})
 
+    elif kind in ("insight_delete", "insights_clear"):
+        pipeline = websocket.app.state.pipeline
+        if pipeline is None:
+            return
+        if kind == "insight_delete":
+            try:
+                pipeline.insights.remove(int(data.get("id")))
+            except (TypeError, ValueError):
+                await send(websocket, {"type": "error", "detail": "item inválido"})
+                return
+        else:
+            pipeline.insights.clear()
+        await broadcast(websocket.app, {"type": "insights", **pipeline.insights.snapshot()})
+
     elif kind in ("llm_analyze_now", "llm_set_model", "llm_pull", "llm_set_interval"):
         pipeline = websocket.app.state.pipeline
         if pipeline is None:

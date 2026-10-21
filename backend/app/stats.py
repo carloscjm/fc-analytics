@@ -164,6 +164,17 @@ class MatchStore:
             self._db.commit()
             return int(cur.lastrowid)
 
+    def delete_insights(self, match_id: int, ids: list[int] | None = None) -> None:
+        """Apaga itens do feed: os de `ids`, ou todos da partida."""
+        with self._lock:
+            if ids is None:
+                self._db.execute("DELETE FROM insights WHERE match_id = ?", (match_id,))
+            else:
+                self._db.executemany(
+                    "DELETE FROM insights WHERE match_id = ? AND id = ?", [(match_id, i) for i in ids]
+                )
+            self._db.commit()
+
     def load_insights(self, match_id: int) -> list[dict]:
         import json
 
