@@ -214,3 +214,57 @@ def flow_notes(stages: list[dict[str, Any]], phase: str) -> list[str]:
     moves.sort(key=lambda m: -m[0])
     notes.extend(m[1] for m in moves[:4])
     return notes
+
+
+# ---------------------------------------------------------------------------
+# Setas do campinho: só os passes e cruzamentos que mais se repetem
+# ---------------------------------------------------------------------------
+
+PASS_ZONES_X = 6  # faixas de 17,5 m
+PASS_ZONES_Y = 3  # esquerda, centro, direita
+MIN_REPEATS_PASS = 3
+MIN_REPEATS_CROSS = 2
+TOP_PASSES = 3
+
+
+def _zone(x: float, y: float) -> tuple[int, int]:
+    zx = min(PASS_ZONES_X - 1, max(0, int(x / (LENGTH / PASS_ZONES_X))))
+    zy = min(PASS_ZONES_Y - 1, max(0, int(y / (WIDTH / PASS_ZONES_Y))))
+    return zx, zy
+
+
+def _arrow(group: list[tuple[float, float, float, float]], kind: str) -> dict[str, Any]:
+    arr = np.array(group, dtype=np.float64)
+    x0, y0, x1, y1 = arr.mean(axis=0)
+    return {"kind": kind, "from": [round(x0, 1), round(y0, 1)], "to": [round(x1, 1), round(y1, 1)], "count": len(group)}
+
+
+def ball_arrows(
+    passes: list[tuple[float, int, float, float, float, float]],
+    crosses: list[tuple[float, int, float, float, float, float]],
+    team: int,
+) -> list[dict[str, Any]]:
+    """Os passes mais repetidos (de uma zona do campo para outra) e os cruzamentos de cada lado.
+
+    Coordenadas do time atacando para a direita. Passes dentro da mesma zona não viram seta
+    (são toques curtos que só poluiriam o desenho).
+    """
+    groups: dict[tuple[tuple[int, int], tuple[int, int]], list[tuple[float, float, float, float]]] = {}
+    for _, t, x0, y0, x1, y1 in passes:
+        if t != team:
+            continue
+        a, b = _zone(x0, y0), _zone(x1, y1)
+        if a == b:
+            continue
+        groups.setdefault((a, b), []).append((x0, y0, x1, y1))
+    ranked = sorted(groups.values(), key=len, reverse=True)
+    out = [_arrow(g, "passe") for g in ranked[:TOP_PASSES] if len(g) >= MIN_REPEATS_PASS]
+    for side in ("esquerda", "direita"):
+        mine = [
+            (x0, y0, x1, y1)
+            for _, t, x0, y0, x1, y1 in crosses
+            if t == team and ((y0 < WIDTH / 2) == (side == "esquerda"))
+        ]
+        if len(mine) >= MIN_REPEATS_CROSS:
+            out.append(_arrow(mine, "cruzamento"))
+    return out

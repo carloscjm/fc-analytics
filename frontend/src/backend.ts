@@ -160,6 +160,14 @@ export interface TeamFlow {
   notes: string[];
 }
 
+/** Passe ou cruzamento que se repete (time atacando para a direita). */
+export interface BallArrow {
+  kind: "passe" | "cruzamento";
+  from: [number, number];
+  to: [number, number];
+  count: number;
+}
+
 export interface PatternsInfo {
   options: Record<string, PatternOption>;
   phaseSource: { bola: number; "avanço": number; "sem fase": number };
@@ -172,6 +180,8 @@ export interface PatternsInfo {
   transitions?: Record<string, PatternTransition | null>;
   /** movimentação dentro de cada fase ("0-ataque", "1-defesa"...) */
   flows?: Record<string, TeamFlow | null>;
+  /** passes e cruzamentos mais repetidos de cada time ("0" e "1") */
+  ballArrows?: Record<string, BallArrow[]>;
 }
 
 export type Pair<T> = [T, T];

@@ -31,7 +31,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from .flows import team_flow
+from .flows import ball_arrows, team_flow
 from .pitch import LENGTH, WIDTH
 from .tactics import (
     RECENT_S,
@@ -56,6 +56,9 @@ GHOST_MAX_AGE_S = 2.0
 MAX_FRAMES = 12000  # cerca de 30 min de jogo ao vivo por fase
 MIN_FRAMES_FOR_PATTERN = 40
 FLOW_EVERY_FRAMES = 200
+PASS_OWNER_RADIUS_M = 2.5
+PASS_MAX_GAP_S = 4.0
+PASS_MIN_M = 8.0
 ROLES = 10
 SIDE_HALF_LIFE_S = 120.0
 HEAT_CELL_M = 5.0
@@ -400,6 +403,9 @@ class PatternStore:
             }
             self.build_ups: dict[int, deque] = {t: deque(maxlen=BACK_LINE_KEEP) for t in (0, 1)}
             self.plays = BallPlays()
+            # Passes do time com a bola: (horário, time, x0, y0, x1, y1), já com o time atacando para a direita.
+            self.passes: deque[tuple[float, int, float, float, float, float]] = deque(maxlen=4000)
+            self.pass_owner: tuple[int, int, float, float, float] | None = None  # (time, id, x, y, horário)
             self.by_ball = False
             self.cached: dict[str, Any] | None = None
             self.flow_cache: dict[tuple[int, str], tuple[Any, dict[str, Any] | None]] = {}
@@ -466,6 +472,7 @@ class PatternStore:
                 att_left = defends_left0 if attacking == 0 else not defends_left0
                 ball_norm = normalize(np.array([[ball["x"], ball["y"]]], np.float32), att_left)[0]
                 self.plays.add(wall, attacking, float(ball_norm[0]), float(ball_norm[1]))
+                self._track_pass(players, ball, attacking, float(ball_norm[0]), float(ball_norm[1]), wall)
             else:
                 self.plays.add(wall, None, None, None)
             for t in (0, 1):
@@ -493,6 +500,29 @@ class PatternStore:
                             label = classify_build_up(members)
                             if label:
                                 self.build_ups[t].append((wall, label))
+
+    def _track_pass(
+        self, players: list[dict[str, Any]], ball: dict[str, Any], team: int, bx: float, by: float, wall: float
+    ) -> None:
+        """Passe = a bola sai dos pés de um jogador e chega aos de outro do mesmo time, a 8 m ou mais."""
+        near = [
+            p for p in players
+            if p["t"] == team and not p.get("g") and p.get("id") is not None
+            and np.hypot(p["x"] - ball["x"], p["y"] - ball["y"]) <= PASS_OWNER_RADIUS_M
+        ]
+        if not near:
+            return
+        owner = min(near, key=lambda p: np.hypot(p["x"] - ball["x"], p["y"] - ball["y"]))
+        prev = self.pass_owner
+        if (
+            prev is not None
+            and prev[0] == team
+            and prev[1] != owner["id"]
+            and wall - prev[4] <= PASS_MAX_GAP_S
+            and np.hypot(bx - prev[2], by - prev[3]) >= PASS_MIN_M
+        ):
+            self.passes.append((wall, team, prev[2], prev[3], bx, by))
+        self.pass_owner = (team, int(owner["id"]), bx, by, wall)
 
     def _flow(self, t: int, phase: str, frames: dict, out: dict[str, Any]) -> dict[str, Any] | None:
         """Movimentação da fase, refeita a cada 200 momentos novos ou quando a formação muda (é mais pesada)."""
@@ -575,6 +605,8 @@ class PatternStore:
             back_raw = {key: list(c) for key, c in self.back_counts.items()}
             build_ups = {t: list(v) for t, v in self.build_ups.items()}
             events = list(self.plays.events)
+            passes = list(self.passes)
+            crosses = list(self.plays.cross_paths)
             backs = {key: back_line_summary(c) for key, c in back_raw.items()}
             overrides = dict(self.overrides)
             seconds = {key: bucket.seconds for key, bucket in self.samples.items()}
@@ -605,6 +637,7 @@ class PatternStore:
         }
         # Depois das transições: no ataque as posições já levam o nome da defesa.
         out["flows"] = {f"{t}-{phase}": self._flow(t, phase, frames, out) for t in (0, 1) for phase in PHASES}
+        out["ballArrows"] = {str(t): ball_arrows(passes, crosses, t) for t in (0, 1)}
         out["tactics"] = {
             str(t): team_tactics(t, out, frames, walls, back_raw, build_ups[t], events, now - RECENT_S) for t in (0, 1)
         }

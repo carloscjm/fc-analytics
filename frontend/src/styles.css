@@ -1229,7 +1229,7 @@ kbd {
 }
 
 .flow-label {
-  font: 600 2.3px system-ui, sans-serif;
+  font: 700 2.4px system-ui, sans-serif;
   fill: #fff;
   text-anchor: middle;
   paint-order: stroke;
@@ -1237,12 +1237,38 @@ kbd {
   stroke-width: 0.6px;
 }
 
-.flow-play-label {
-  font: 600 2.1px system-ui, sans-serif;
-  fill: #fbbf24;
+.flow-arrow-label {
+  font: 700 2.6px system-ui, sans-serif;
+  text-anchor: middle;
   paint-order: stroke;
   stroke: rgba(0, 0, 0, 0.8);
-  stroke-width: 0.5px;
+  stroke-width: 0.6px;
+}
+
+.flow-steps {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+  background: #0f1a12;
+}
+
+.flow-steps li {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  transition: background 0.25s, color 0.25s;
+}
+
+.flow-steps li.on {
+  color: #0f1a12;
+  background: #e8ece4;
+  border-color: #e8ece4;
+  font-weight: 600;
 }
 
 .flow-legend {
@@ -1258,20 +1284,16 @@ kbd {
   gap: 6px;
 }
 
-.flow-key {
-  width: 12px;
-  height: 12px;
-}
-
 .flow-legend .bar {
   display: inline-block;
-  width: 16px;
+  width: 18px;
   height: 0;
-  border-top: 2px solid currentColor;
+  border-top: 3px solid currentColor;
+  border-radius: 2px;
 }
 
-.flow-legend .bar.dashed {
-  border-top-style: dashed;
+.flow-legend .bar.pass {
+  border-top-color: #94a3b8;
 }
 
 .flow-legend .bar.ball {

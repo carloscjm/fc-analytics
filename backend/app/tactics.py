@@ -152,6 +152,8 @@ class BallPlays:
 
     def __init__(self) -> None:
         self.events: deque[tuple[float, int, str, str | None]] = deque(maxlen=6000)
+        # Caminho dos cruzamentos: (horário, time, x0, y0, x1, y1), para as setas do campinho.
+        self.cross_paths: deque[tuple[float, int, float, float, float, float]] = deque(maxlen=2000)
         self.reset_path()
 
     def reset_path(self) -> None:
@@ -202,7 +204,10 @@ class BallPlays:
                     continue
                 wide = p.y <= WIDE_Y or p.y >= WIDTH - WIDE_Y
                 if p.x >= 70 and wide and np.hypot(point.x - p.x, point.y - p.y) >= 12:
+                    before = len(self.events)
                     self._emit(point.wall, "cruzamento", "esquerda" if p.y < WIDTH / 2 else "direita", 4.0)
+                    if len(self.events) > before:
+                        self.cross_paths.append((point.wall, int(self.team), p.x, p.y, point.x, point.y))
                     crossed = True
                     break
             if not crossed:

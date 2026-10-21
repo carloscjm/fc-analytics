@@ -56,3 +56,30 @@ def test_defense_goes_from_high_press_to_low_block():
     assert [s["name"] for s in flow["stages"]] == ["Pressão alta", "Bloco médio", "Bloco baixo"]
     assert flow["stages"][0]["height"] > flow["stages"][-1]["height"]
     assert any("recua" in n for n in flow["notes"])
+
+
+def test_ball_arrows_keep_only_repeated_passes_and_crosses():
+    from app.flows import ball_arrows
+
+    passes = [(i, 0, 20.0, 10.0, 45.0, 12.0) for i in range(5)]  # LE → ME, 5 vezes
+    passes += [(i, 0, 40.0, 30.0, 70.0, 34.0) for i in range(2)]  # só 2: não vira seta
+    passes += [(i, 0, 30.0, 30.0, 33.0, 32.0) for i in range(9)]  # mesma zona: toque curto
+    passes += [(i, 1, 20.0, 10.0, 45.0, 12.0) for i in range(9)]  # outro time
+    crosses = [(i, 0, 90.0, 6.0, 98.0, 32.0) for i in range(3)] + [(9, 0, 90.0, 62.0, 97.0, 36.0)]
+    arrows = ball_arrows(passes, crosses, 0)
+    kinds = [(a["kind"], a["count"]) for a in arrows]
+    assert kinds == [("passe", 5), ("cruzamento", 3)]
+    assert arrows[0]["from"] == [20.0, 10.0] and arrows[0]["to"] == [45.0, 12.0]
+
+
+def test_pattern_store_records_passes_between_teammates():
+    from app.patterns import PatternStore
+
+    store = PatternStore()
+    store.side.score = 10.0  # time 0 defende a esquerda
+    store.possession, store.by_ball = 0, True
+    a = {"id": 1, "x": 30.0, "y": 20.0, "t": 0, "l": "jogador", "g": False, "age": 0}
+    b = {"id": 2, "x": 50.0, "y": 25.0, "t": 0, "l": "jogador", "g": False, "age": 0}
+    store._track_pass([a, b], {"x": 30.5, "y": 20.0}, 0, 30.5, 20.0, 100.0)
+    store._track_pass([a, b], {"x": 49.5, "y": 25.0}, 0, 49.5, 25.0, 101.5)
+    assert list(store.passes) == [(101.5, 0, 30.5, 20.0, 49.5, 25.0)]

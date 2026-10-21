@@ -457,7 +457,7 @@ export default function App() {
     color: colors[part.team],
     mirror: part.mirror,
     name: names[part.team],
-    plays: part.option.endsWith("ataque") ? (patterns?.tactics?.[String(part.team)]?.plays.partida ?? null) : null,
+    arrows: part.option.endsWith("ataque") ? (patterns?.ballArrows?.[String(part.team)] ?? null) : null,
   }));
   const flowMissing = flowParts.filter(({ flow }) => !flow);
   const flowCard = (
@@ -480,24 +480,14 @@ export default function App() {
         )}
       </div>
       <div className="flow-legend muted small">
+        <span>As peças andam do começo ao fim da fase e recomeçam.</span>
         <span>
-          <svg viewBox="0 0 10 10" className="flow-key"><circle cx="5" cy="5" r="3.4" fill="none" stroke="currentColor" strokeWidth="1.2" /></svg>
-          início da fase
+          <span className="bar pass" /> passes que mais se repetem
         </span>
         <span>
-          <svg viewBox="0 0 10 10" className="flow-key"><circle cx="5" cy="5" r="1.6" fill="currentColor" /></svg>
-          meio
+          <span className="bar ball" /> cruzamentos que mais se repetem
         </span>
-        <span>
-          <svg viewBox="0 0 10 10" className="flow-key"><circle cx="5" cy="5" r="4" fill="currentColor" /></svg>
-          fim (com o nome da posição)
-        </span>
-        <span>
-          <span className="bar dashed" /> linha da formação no início{flowParts.length > 1 ? " (só com um time)" : ""}
-        </span>
-        <span>
-          <span className="bar ball" /> jogadas com a bola na partida
-        </span>
+        <span>o número na seta é quantas vezes aconteceu</span>
       </div>
       <div className={flowParts.length > 1 ? "stats-duo" : ""}>
         {flowParts.map(({ part, flow }) =>
@@ -529,8 +519,9 @@ export default function App() {
       <p className="muted small map-foot">
         Os momentos de cada fase são divididos em três etapas pela altura do time no campo
         {flowParts.some(({ part }) => part.option.endsWith("defesa")) ? " (na defesa: da pressão alta ao bloco baixo)" : ""}, e
-        cada posição é seguida de uma etapa para a outra. Linhas tracejadas e jogadores apagados são posições que a câmera
-        quase não mostrou naquela etapa. Mesmo sentido do campo de cima: o ataque vai da esquerda para a direita.
+        cada peça mostra onde aquela posição fica em cada etapa. Peças apagadas são posições que a câmera quase não mostrou
+        naquela etapa. As setas só aparecem para passes repetidos 3 vezes ou mais (entre zonas diferentes do campo) e
+        cruzamentos repetidos 2 vezes ou mais. Mesmo sentido do campo de cima: o ataque vai da esquerda para a direita.
       </p>
     </section>
   );

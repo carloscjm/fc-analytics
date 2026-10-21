@@ -90,13 +90,14 @@ O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time e
 
 ## Movimentação (campinho abaixo do campo principal)
 
-Um segundo campo, só de leitura, mostra **como o time se movimenta** na opção escolhida em cima:
+Um segundo campo, só de leitura, mostra **como o time se movimenta** na opção escolhida em cima. As peças andam sozinhas, em loop, pelas três etapas da fase:
 
-- **Ataque:** os momentos em que o time tem a bola são divididos em três etapas pela altura do time no campo: **saída de bola** → **progressão** → **chegada**. Cada posição vira um caminho: anel no começo, ponto no meio e o jogador com o nome no fim. Dá para ver o lateral que sobe e fecha para o meio, o volante que cai entre os zagueiros na saída, o ponta que abre. Em amarelo, as jogadas com a bola da partida: cruzamentos por lado, entradas na área e chutes de fora.
+- **Ataque:** **saída de bola** → **progressão** → **chegada**. Dá para ver o lateral que sobe e fecha para o meio, o volante que cai entre os zagueiros na saída, o ponta que abre.
 - **Defesa:** **pressão alta** → **bloco médio** → **bloco baixo**: como a formação se recompõe, quem entra na última linha (linha de 5) e quem fica adiantado.
-- **Duas opções juntas** (A ataca × B defende) mostram os dois times; **defesa → ataque** mostra como o time ataca.
+- A etapa da vez aparece destacada embaixo do campo. Duas opções juntas (A ataca × B defende) animam os dois times ao mesmo tempo; **defesa → ataque** mostra como o time ataca.
+- **Setas só para o que se repete:** passes de uma zona do campo para outra que aconteceram 3 vezes ou mais (brancas, até 3) e cruzamentos de cada lado repetidos 2 vezes ou mais (amarelas), com o número de vezes.
 - Embaixo, frases curtas: quantos ficam na última linha em cada etapa, quanto o time sobe ou recua e as posições que mais se destacam.
-- Precisa de pelo menos 90 momentos da fase. Posições que a câmera quase não mostrou numa etapa aparecem apagadas e tracejadas.
+- Precisa de pelo menos 90 momentos da fase. Peças apagadas são posições que a câmera quase não mostrou naquela etapa.
 
 ## Quem é quem e nomes dos times
 

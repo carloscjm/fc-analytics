@@ -1,4 +1,5 @@
-import type { FlowRole, PlaysInfo, TeamFlow } from "./backend";
+import { useEffect, useState } from "react";
+import type { BallArrow, FlowRole, TeamFlow } from "./backend";
 import { LENGTH, PENALTY_SPOTS, WIDTH, pitchLines } from "./pitch";
 import { SECTOR_COLORS } from "./PatternField3D";
 
@@ -8,19 +9,97 @@ export interface FlowLayer {
   color: string;
   mirror: boolean;
   name: string;
-  /** jogadas com a bola (só para quem ataca) */
-  plays?: PlaysInfo | null;
+  /** passes e cruzamentos mais repetidos (só para quem ataca) */
+  arrows?: BallArrow[] | null;
 }
 
-const PAD = 5;
+const PAD = 4;
 const LINES = pitchLines(16);
-const MIN_MOVE_M = 2;
-const ARROW_W = 2;
+const PASS_COLOR = "#f8fafc";
+const CROSS_COLOR = "#fbbf24";
+
+/**
+ * Linha do tempo de uma volta (segundos): parado na 1ª etapa, anda até a 2ª, parado, anda até a 3ª,
+ * parado e some para recomeçar.
+ */
+const HOLD_START = 1.2;
+const MOVE = 2.0;
+const HOLD_MID = 0.9;
+const HOLD_END = 1.6;
+const FADE = 0.5;
+const CYCLE = HOLD_START + MOVE + HOLD_MID + MOVE + HOLD_END + FADE;
 
 type P = [number, number];
 
-function place(role: FlowRole, mirror: boolean): P {
-  return mirror ? [LENGTH - role.x, WIDTH - role.y] : [role.x, role.y];
+interface Moment {
+  /** posição entre as etapas: 0 = primeira, 1 = segunda, 2 = terceira */
+  at: number;
+  /** etapa em destaque nos rótulos */
+  stage: number;
+  opacity: number;
+}
+
+function ease(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+}
+
+function momentAt(clock: number): Moment {
+  let t = clock % CYCLE;
+  if (t < HOLD_START) return { at: 0, stage: 0, opacity: Math.min(1, t / 0.3) };
+  t -= HOLD_START;
+  if (t < MOVE) return { at: ease(t / MOVE), stage: t / MOVE < 0.5 ? 0 : 1, opacity: 1 };
+  t -= MOVE;
+  if (t < HOLD_MID) return { at: 1, stage: 1, opacity: 1 };
+  t -= HOLD_MID;
+  if (t < MOVE) return { at: 1 + ease(t / MOVE), stage: t / MOVE < 0.5 ? 1 : 2, opacity: 1 };
+  t -= MOVE;
+  if (t < HOLD_END) return { at: 2, stage: 2, opacity: 1 };
+  t -= HOLD_END;
+  return { at: 2, stage: 2, opacity: Math.max(0, 1 - t / FADE) };
+}
+
+function reducedMotion(): boolean {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
+/** Relógio da animação (sem animação para quem pediu menos movimento: troca de etapa a cada 2,5 s). */
+function useClock(): Moment {
+  const [moment, setMoment] = useState<Moment>(() => momentAt(0));
+  useEffect(() => {
+    const start = performance.now();
+    if (reducedMotion()) {
+      const timer = window.setInterval(() => {
+        const stage = Math.floor((performance.now() - start) / 2500) % 3;
+        setMoment({ at: stage, stage, opacity: 1 });
+      }, 250);
+      return () => window.clearInterval(timer);
+    }
+    let frame = 0;
+    const tick = (now: number) => {
+      setMoment(momentAt((now - start) / 1000));
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return moment;
+}
+
+function place(x: number, y: number, mirror: boolean): P {
+  return mirror ? [LENGTH - x, WIDTH - y] : [x, y];
+}
+
+/** Posição de uma posição do time no instante `at` (entre as etapas). */
+function positionAt(flow: TeamFlow, j: number, at: number, mirror: boolean): P {
+  const i = Math.min(Math.floor(at), flow.stages.length - 2);
+  const f = at - i;
+  const a = flow.stages[i].roles[j];
+  const b = flow.stages[i + 1].roles[j];
+  return place(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, mirror);
 }
 
 function sectorOf(line: number, last: number): keyof typeof SECTOR_COLORS {
@@ -28,102 +107,36 @@ function sectorOf(line: number, last: number): keyof typeof SECTOR_COLORS {
   return line === last ? "ataque" : "meio";
 }
 
-/** Curva suave pelas três etapas (passa pelo ponto do meio), terminando antes do jogador para a ponta da seta aparecer. */
-function curve([a, b, c]: P[], trim: number): string {
-  // Ponto de controle que faz a quadrática passar por b no meio do caminho.
-  const cx = 2 * b[0] - (a[0] + c[0]) / 2;
-  const cy = 2 * b[1] - (a[1] + c[1]) / 2;
-  const dx = c[0] - cx;
-  const dy = c[1] - cy;
-  const len = Math.hypot(dx, dy) || 1;
-  const k = Math.min(trim, len * 0.5) / len;
-  const ex = c[0] - dx * k;
-  const ey = c[1] - dy * k;
-  return `M${a[0].toFixed(1)},${a[1].toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${ex.toFixed(1)},${ey.toFixed(1)}`;
-}
-
-function markerId(color: string): string {
-  return `flow-head-${color.replace(/[^a-z0-9]/gi, "")}`;
-}
-
-/** Linhas da formação numa etapa (defesa azul, meio amarelo, ataque vermelho). */
-function Shape({ roles, mirror, faded }: { roles: FlowRole[]; mirror: boolean; faded: boolean }) {
+function Team({ layer, at }: { layer: FlowLayer; at: number }) {
+  const flow = layer.flow!;
+  const roles: FlowRole[] = flow.stages[0].roles;
+  const pts = roles.map((_, j) => positionAt(flow, j, at, layer.mirror));
   const last = Math.max(...roles.map((r) => r.line));
-  const groups = new Map<number, P[]>();
-  for (const r of roles) groups.set(r.line, [...(groups.get(r.line) ?? []), place(r, mirror)]);
-  return (
-    <g opacity={faded ? 0.35 : 0.85}>
-      {[...groups.entries()].map(([line, pts]) =>
-        pts.length < 2 ? null : (
-          <polyline
-            key={line}
-            points={[...pts].sort((p, q) => p[1] - q[1]).map((p) => p.join(",")).join(" ")}
-            fill="none"
-            stroke={SECTOR_COLORS[sectorOf(line, last)]}
-            strokeWidth={faded ? 0.3 : 0.4}
-            strokeDasharray={faded ? "1.2 1" : undefined}
-          />
-        ),
-      )}
-    </g>
-  );
-}
-
-interface Track {
-  pts: P[];
-  name: string;
-  estimated: boolean;
-}
-
-function tracks(layer: FlowLayer): Track[] {
-  const stages = layer.flow!.stages;
-  const last = stages[stages.length - 1].roles;
-  return last.map((role, j) => ({
-    pts: stages.map((s) => place(s.roles[j], layer.mirror)),
-    name: role.name,
-    estimated: stages.some((s) => s.roles[j].estimated),
-  }));
-}
-
-/** Setas grossas e translúcidas: do começo ao fim da fase, passando pelo meio. */
-function TeamArrows({ layer }: { layer: FlowLayer }) {
+  const lines = new Map<number, P[]>();
+  roles.forEach((r, j) => lines.set(r.line, [...(lines.get(r.line) ?? []), pts[j]]));
+  // Posição com poucos dados na etapa mais próxima fica apagada.
+  const nearest = flow.stages[Math.round(at)].roles;
   return (
     <g>
-      {tracks(layer).map((t, j) => {
-        const [a, , c] = t.pts;
-        if (Math.hypot(c[0] - a[0], c[1] - a[1]) < MIN_MOVE_M) return null;
-        return (
-          <g key={j} opacity={t.estimated ? 0.22 : 0.5}>
-            <path
-              d={curve(t.pts, 2.9)}
+      <g opacity={0.75}>
+        {[...lines.entries()].map(([line, group]) =>
+          group.length < 2 ? null : (
+            <polyline
+              key={line}
+              points={[...group].sort((p, q) => p[1] - q[1]).map((p) => p.join(",")).join(" ")}
               fill="none"
-              stroke={layer.color}
-              strokeWidth={ARROW_W}
-              strokeLinecap="butt"
-              strokeDasharray={t.estimated ? "2.4 1.6" : undefined}
-              markerEnd={`url(#${markerId(layer.color)})`}
+              stroke={SECTOR_COLORS[sectorOf(line, last)]}
+              strokeWidth={0.45}
             />
-          </g>
-        );
-      })}
-    </g>
-  );
-}
-
-/** Onde cada posição começa (anel) e termina (jogador com o nome). */
-function TeamMarks({ layer, startShape }: { layer: FlowLayer; startShape: boolean }) {
-  const stages = layer.flow!.stages;
-  return (
-    <g>
-      {startShape && <Shape roles={stages[0].roles} mirror={layer.mirror} faded />}
-      <Shape roles={stages[stages.length - 1].roles} mirror={layer.mirror} faded={false} />
-      {tracks(layer).map((t, j) => (
-        <g key={j} opacity={t.estimated ? 0.45 : 1}>
-          <circle cx={t.pts[0][0]} cy={t.pts[0][1]} r={1.2} fill="none" stroke={layer.color} strokeWidth={0.4} opacity={0.6} />
-          <circle cx={t.pts[2][0]} cy={t.pts[2][1]} r={1.8} fill={layer.color} stroke="#0b130d" strokeWidth={0.4} />
-          {t.name && (
-            <text x={t.pts[2][0]} y={t.pts[2][1] - 2.7} className="flow-label">
-              {t.name}
+          ),
+        )}
+      </g>
+      {roles.map((role, j) => (
+        <g key={j} opacity={nearest[j].estimated ? 0.4 : 1}>
+          <circle cx={pts[j][0]} cy={pts[j][1]} r={2.1} fill={layer.color} stroke="#0b130d" strokeWidth={0.45} />
+          {role.name && (
+            <text x={pts[j][0]} y={pts[j][1] - 3} className="flow-label">
+              {role.name}
             </text>
           )}
         </g>
@@ -132,109 +145,95 @@ function TeamMarks({ layer, startShape }: { layer: FlowLayer; startShape: boolea
   );
 }
 
-const BALL = "#fbbf24";
-
-/** Jogadas com a bola de quem ataca (para a direita): cruzamentos por lado, entradas e chutes de fora. */
-function Plays({ plays }: { plays: PlaysInfo }) {
-  const c = plays.counts;
-  const crossL = plays.bySide.cruzamento.esquerda;
-  const crossR = plays.bySide.cruzamento.direita;
-  const width = (n: number) => 1.2 + Math.min(1.6, n * 0.12);
+/** Seta curva (um pouco arqueada) com a quantidade de vezes no meio. */
+function Arrow({ arrow }: { arrow: BallArrow }) {
+  const [x0, y0] = arrow.from;
+  const [x1, y1] = arrow.to;
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.hypot(dx, dy) || 1;
+  const bend = Math.min(6, len * 0.15);
+  const cx = (x0 + x1) / 2 - (dy / len) * bend;
+  const cy = (y0 + y1) / 2 + (dx / len) * bend;
+  const color = arrow.kind === "passe" ? PASS_COLOR : CROSS_COLOR;
+  const width = 0.9 + Math.min(2.2, arrow.count * 0.18);
+  const mx = (x0 + 2 * cx + x1) / 4;
+  const my = (y0 + 2 * cy + y1) / 4;
   return (
-    <g className="flow-plays">
-      {crossL > 0 && (
-        <g>
-          <path opacity={0.5} d="M88,5 Q99,10 96,28" fill="none" stroke={BALL} strokeWidth={width(crossL)} markerEnd="url(#flow-head-ball)" />
-          <text x={84} y={-1.6} className="flow-play-label">
-            {crossL} cruz.
-          </text>
-        </g>
-      )}
-      {crossR > 0 && (
-        <g>
-          <path opacity={0.5} d="M88,63 Q99,58 96,40" fill="none" stroke={BALL} strokeWidth={width(crossR)} markerEnd="url(#flow-head-ball)" />
-          <text x={84} y={71.2} className="flow-play-label">
-            {crossR} cruz.
-          </text>
-        </g>
-      )}
-      {c.entrada > 0 && (
-        <g>
-          <path opacity={0.5} d="M80,31 L91,31" fill="none" stroke={BALL} strokeWidth={width(c.entrada)} markerEnd="url(#flow-head-ball)" />
-          <text x={79} y={29.4} className="flow-play-label">
-            {c.entrada} entradas
-          </text>
-        </g>
-      )}
-      {c.chute_fora > 0 && (
-        <g>
-          <path
-            opacity={0.5}
-            d="M80,38 L103,35"
-            fill="none"
-            stroke={BALL}
-            strokeWidth={width(c.chute_fora)}
-            strokeDasharray="1.6 1"
-            markerEnd="url(#flow-head-ball)"
-          />
-          <text x={79} y={41.2} className="flow-play-label">
-            {c.chute_fora} chutes de fora
-          </text>
-        </g>
-      )}
+    <g>
+      <path
+        d={`M${x0},${y0} Q${cx},${cy} ${x1},${y1}`}
+        fill="none"
+        stroke={color}
+        strokeWidth={width}
+        strokeLinecap="round"
+        opacity={0.55}
+        markerEnd={`url(#flow-head-${arrow.kind})`}
+      />
+      <text x={mx} y={my - 1.6} className="flow-arrow-label" style={{ fill: color }}>
+        {arrow.count}×
+      </text>
     </g>
   );
 }
 
-/** Campinho só de leitura: como cada posição se move ao longo da fase (três etapas). */
+/** Campinho só de leitura: as peças andam pelas três etapas da fase, em loop. */
 export function FlowPitch({ layers }: { layers: FlowLayer[] }) {
+  const moment = useClock();
   const shown = layers.filter((l) => l.flow);
-  const colors = [...new Set(shown.map((l) => l.color))];
+  const stageCount = 3;
   return (
-    <svg
-      className="flow-pitch"
-      viewBox={`${-PAD} ${-PAD} ${LENGTH + 2 * PAD} ${WIDTH + 2 * PAD}`}
-      role="img"
-      aria-label="Campinho com a movimentação de cada posição ao longo da fase"
-    >
-      <defs>
-        {colors.map((color) => (
-          <marker
-            key={color}
-            id={markerId(color)}
-            viewBox="0 0 10 10"
-            refX="8"
-            refY="5"
-            markerWidth="2.2"
-            markerHeight="2.2"
-            orient="auto"
-          >
-            <path d="M0,0 L10,5 L0,10 z" fill={color} />
+    <div className="flow-pitch-box">
+      <svg
+        className="flow-pitch"
+        viewBox={`${-PAD} ${-PAD} ${LENGTH + 2 * PAD} ${WIDTH + 2 * PAD}`}
+        role="img"
+        aria-label="Campinho animado com a movimentação do time ao longo da fase"
+      >
+        <defs>
+          <marker id="flow-head-passe" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="2" markerHeight="2" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill={PASS_COLOR} />
           </marker>
+          <marker id="flow-head-cruzamento" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="2" markerHeight="2" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill={CROSS_COLOR} />
+          </marker>
+        </defs>
+        <rect x={-PAD} y={-PAD} width={LENGTH + 2 * PAD} height={WIDTH + 2 * PAD} fill="#0f1a12" />
+        {Array.from({ length: 10 }, (_, i) => (
+          <rect key={i} x={(i * LENGTH) / 10} y={0} width={LENGTH / 10} height={WIDTH} fill={i % 2 ? "#1e4a2a" : "#225230"} />
         ))}
-        <marker id="flow-head-ball" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="2.2" markerHeight="2.2" orient="auto">
-          <path d="M0,0 L10,5 L0,10 z" fill={BALL} />
-        </marker>
-      </defs>
-      <rect x={-PAD} y={-PAD} width={LENGTH + 2 * PAD} height={WIDTH + 2 * PAD} fill="#0f1a12" />
-      {Array.from({ length: 10 }, (_, i) => (
-        <rect key={i} x={(i * LENGTH) / 10} y={0} width={LENGTH / 10} height={WIDTH} fill={i % 2 ? "#1e4a2a" : "#225230"} />
-      ))}
-      <g fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth={0.3}>
-        {LINES.map((line, i) => (
-          <polyline key={i} points={line.map((p) => p.join(",")).join(" ")} />
+        <g fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth={0.3}>
+          {LINES.map((line, i) => (
+            <polyline key={i} points={line.map((p) => p.join(",")).join(" ")} />
+          ))}
+        </g>
+        {PENALTY_SPOTS.map(([x, y], i) => (
+          <circle key={i} cx={x} cy={y} r={0.35} fill="rgba(255,255,255,0.6)" />
         ))}
-      </g>
-      {PENALTY_SPOTS.map(([x, y], i) => (
-        <circle key={i} cx={x} cy={y} r={0.35} fill="rgba(255,255,255,0.6)" />
-      ))}
-      {shown.map((layer, i) => (!layer.mirror && layer.plays ? <Plays key={`p${i}`} plays={layer.plays} /> : null))}
-      {shown.map((layer, i) => (
-        <TeamArrows key={`a${i}`} layer={layer} />
-      ))}
-      {shown.map((layer, i) => (
-        <TeamMarks key={`m${i}`} layer={layer} startShape={shown.length === 1} />
-      ))}
-    </svg>
+        {shown.map((layer, i) =>
+          !layer.mirror && layer.arrows?.length ? (
+            <g key={`a${i}`}>
+              {layer.arrows.map((arrow, k) => (
+                <Arrow key={k} arrow={arrow} />
+              ))}
+            </g>
+          ) : null,
+        )}
+        <g opacity={moment.opacity}>
+          {shown.map((layer, i) => (
+            <Team key={i} layer={layer} at={moment.at} />
+          ))}
+        </g>
+      </svg>
+      {shown.length > 0 && (
+        <ol className="flow-steps" aria-hidden="true">
+          {Array.from({ length: stageCount }, (_, s) => (
+            <li key={s} className={moment.stage === s ? "on" : ""}>
+              {shown.map((layer) => layer.flow!.stages[s].name).join(" × ")}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }
