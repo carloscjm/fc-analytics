@@ -20,6 +20,7 @@ export interface TeamsInfo {
   progress: number;
   colors: [string, string] | null;
   counts: { "0": number; "1": number };
+  recalibrations?: number;
 }
 
 export interface TrackingInfo {

@@ -204,6 +204,10 @@ export default function App() {
               <p className="small">
                 Dica: abra esta página numa janela separada, ao lado do jogo. Assim você vê as caixas enquanto assiste.
               </p>
+              <p className="small">
+                No YouTube, deixe o vídeo em modo teatro (tecla T) ou tela cheia (tecla F). Com os jogadores maiores na
+                captura, a detecção, o tracking e os times ficam bem melhores.
+              </p>
             </div>
           )}
         </section>
@@ -268,7 +272,7 @@ export default function App() {
                   <div style={{ width: `${Math.round(teams.progress * 100)}%` }} />
                 </div>
                 <p className="muted small">
-                  Leva até 30 segundos de jogo com a câmera aberta mostrando os dois times.
+                  Usa só as tomadas abertas, com os dois times em campo. Closes e replays não contam.
                 </p>
               </>
             ) : (
@@ -282,6 +286,9 @@ export default function App() {
                 ))}
               </ul>
             )}
+            {teams?.recalibrations ? (
+              <p className="muted small">Recalibrado {teams.recalibrations} vez(es) nesta captura.</p>
+            ) : null}
             <button
               className="btn small-btn"
               disabled={!capturing}
