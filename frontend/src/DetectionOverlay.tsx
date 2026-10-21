@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { DetectionsMessage, WireBox } from "./backend";
 import { pitchLines, projectToImage } from "./pitch";
+import type { Rect } from "./region";
 
 const LINES = pitchLines(32);
 
@@ -53,10 +54,12 @@ interface Props {
   result: DetectionsMessage | null;
   showLabels: boolean;
   showPitch: boolean;
+  /** Recorte do vídeo que foi analisado (frações da imagem capturada); null = imagem inteira. */
+  crop: Rect | null;
 }
 
 /** Desenha as caixas sobre o vídeo, respeitando o enquadramento (object-fit: contain). */
-export function DetectionOverlay({ video, result, showLabels, showPitch }: Props) {
+export function DetectionOverlay({ video, result, showLabels, showPitch, crop }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -81,10 +84,20 @@ export function DetectionOverlay({ video, result, showLabels, showPitch }: Props
       const scale = Math.min(cw / video.videoWidth, ch / video.videoHeight);
       const shownW = video.videoWidth * scale;
       const shownH = video.videoHeight * scale;
-      const offX = (cw - shownW) / 2;
-      const offY = (ch - shownH) / 2;
-      const sx = shownW / result.width;
-      const sy = shownH / result.height;
+      // A área analisada (o recorte) dentro do vídeo mostrado na página.
+      const region = crop ?? { x: 0, y: 0, w: 1, h: 1 };
+      const offX = (cw - shownW) / 2 + region.x * shownW;
+      const offY = (ch - shownH) / 2 + region.y * shownH;
+      const sx = (shownW * region.w) / result.width;
+      const sy = (shownH * region.h) / result.height;
+      if (crop) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.55)";
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(offX, offY, shownW * region.w, shownH * region.h);
+        ctx.restore();
+      }
       const colors = teamColors(result);
 
       // Linhas do campo projetadas pela homografia: conferem se o mapa está alinhado.
@@ -142,7 +155,7 @@ export function DetectionOverlay({ video, result, showLabels, showPitch }: Props
     const observer = new ResizeObserver(draw);
     observer.observe(video);
     return () => observer.disconnect();
-  }, [video, result, showLabels, showPitch]);
+  }, [video, result, showLabels, showPitch, crop]);
 
   return <canvas ref={canvasRef} className="overlay" aria-hidden="true" />;
 }

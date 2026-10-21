@@ -125,14 +125,22 @@ def test_field_map_ghosts():
     p1 = next(p for p in snap["players"] if p["id"] == 1)
     assert abs(p1["x"] - 50) < 0.5 and abs(p1["y"] - 30) < 0.5
 
+    # Os dois ficam visíveis por mais de 1 s.
+    fmap.update(h, [box_at(1, 50, 30, 0), box_at(2, 60, 40, 1)], ts=1.2, scene="ao vivo")
+
     # O jogador 2 sai da imagem: fica como fantasma.
-    fmap.update(h, [box_at(1, 50, 30, 0)], ts=1.0, scene="ao vivo")
-    ghosts = [p for p in fmap.snapshot(1.0)["players"] if p["g"]]
+    fmap.update(h, [box_at(1, 50, 30, 0)], ts=2.0, scene="ao vivo")
+    ghosts = [p for p in fmap.snapshot(2.0)["players"] if p["g"]]
     assert [g["id"] for g in ghosts] == [2]
 
-    # Um jogador visível do mesmo time aparece perto: o fantasma some.
-    fmap.update(h, [box_at(1, 50, 30, 0), box_at(7, 61, 40, 1)], ts=2.0, scene="ao vivo")
-    assert not [p for p in fmap.snapshot(2.0)["players"] if p["g"]]
+    # Um ID novo aparece perto: é o mesmo jogador, o fantasma some.
+    fmap.update(h, [box_at(1, 50, 30, 0), box_at(7, 62, 41, 1)], ts=2.5, scene="ao vivo")
+    assert not [p for p in fmap.snapshot(2.5)["players"] if p["g"]]
+
+    # Um ID que durou pouco não vira fantasma.
+    fmap.update(h, [box_at(1, 50, 30, 0), box_at(7, 62, 41, 1), box_at(9, 20, 10, 0)], ts=2.6, scene="ao vivo")
+    fmap.update(h, [box_at(1, 50, 30, 0), box_at(7, 62, 41, 1)], ts=2.7, scene="ao vivo")
+    assert 9 not in {p["id"] for p in fmap.snapshot(2.7)["players"]}
 
     # Sem campo: o mapa pausa e mantém as posições.
     fmap.update(None, [], ts=3.0, scene="close")

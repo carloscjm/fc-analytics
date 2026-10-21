@@ -10,6 +10,8 @@
  *   próximo tique é pulado. Isso impede que uma fila acumule e o atraso cresça.
  */
 
+import { SAMPLE_W, VideoRegionFinder, shouldReplace, type Rect } from "./region";
+
 export const MAX_WIDTH = 1280;
 export const MAX_HEIGHT = 720;
 const HEADER_BYTES = 12;
@@ -70,6 +72,14 @@ export interface SenderCounters {
 export class FrameSender {
   quality = 0.75;
   counters: SenderCounters = { sent: 0, skipped: 0, lost: 0 };
+  /** Recorte automático da área do vídeo dentro da aba (frações da imagem capturada). */
+  autoCrop = true;
+  crop: Rect | null = null;
+
+  private finder = new VideoRegionFinder();
+  private cropsById = new Map<number, Rect | null>();
+  private sample: OffscreenCanvas | HTMLCanvasElement;
+  private sampleCtx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
 
   private nextId = 1;
   private inFlight = new Map<number, number>();
@@ -92,6 +102,40 @@ export class FrameSender {
     const ctx = this.canvas.getContext("2d");
     if (!ctx) throw new Error("canvas 2D indisponível");
     this.ctx = ctx as OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
+    this.sample =
+      typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(SAMPLE_W, 108) : document.createElement("canvas");
+    const sampleCtx = this.sample.getContext("2d", { willReadFrequently: true });
+    if (!sampleCtx) throw new Error("canvas 2D indisponível");
+    this.sampleCtx = sampleCtx as OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
+  }
+
+  setAutoCrop(on: boolean): void {
+    this.autoCrop = on;
+    this.finder.reset();
+    if (!on) this.crop = null;
+  }
+
+  /** Recorte usado no frame enviado (para desenhar as caixas no lugar certo). */
+  cropFor(frameId: number): Rect | null {
+    return this.cropsById.get(frameId) ?? null;
+  }
+
+  private updateRegion(source: CanvasImageSource, srcW: number, srcH: number): void {
+    if (!this.autoCrop) return;
+    const w = SAMPLE_W;
+    const h = Math.max(8, Math.round((SAMPLE_W * srcH) / srcW));
+    if (this.sample.width !== w || this.sample.height !== h) {
+      this.sample.width = w;
+      this.sample.height = h;
+    }
+    this.sampleCtx.drawImage(source, 0, 0, w, h);
+    const rgba = this.sampleCtx.getImageData(0, 0, w, h).data;
+    const gray = new Uint8Array(w * h);
+    for (let i = 0; i < gray.length; i++) {
+      gray[i] = (rgba[i * 4] * 77 + rgba[i * 4 + 1] * 150 + rgba[i * 4 + 2] * 29) >> 8;
+    }
+    const found = this.finder.addSample(gray, w, h);
+    if (found !== undefined && shouldReplace(this.crop, found)) this.crop = found;
   }
 
   start(): void {
@@ -151,12 +195,19 @@ export class FrameSender {
       const srcH = source instanceof HTMLVideoElement ? source.videoHeight : (source as ImageBitmap).height;
       if (!srcW || !srcH) return;
 
-      const { width, height } = fitSize(srcW, srcH);
+      this.updateRegion(source, srcW, srcH);
+      const crop = this.crop;
+      const sx = crop ? Math.round(crop.x * srcW) : 0;
+      const sy = crop ? Math.round(crop.y * srcH) : 0;
+      const sw = crop ? Math.round(crop.w * srcW) : srcW;
+      const sh = crop ? Math.round(crop.h * srcH) : srcH;
+
+      const { width, height } = fitSize(sw, sh);
       if (this.canvas.width !== width || this.canvas.height !== height) {
         this.canvas.width = width;
         this.canvas.height = height;
       }
-      this.ctx.drawImage(source, 0, 0, width, height);
+      this.ctx.drawImage(source, sx, sy, sw, sh, 0, 0, width, height);
       if ("close" in source && typeof source.close === "function") source.close();
 
       const blob =
@@ -168,6 +219,8 @@ export class FrameSender {
       if (!blob) return;
 
       const id = this.nextId++;
+      this.cropsById.set(id, crop);
+      if (this.cropsById.size > 50) this.cropsById.delete(this.cropsById.keys().next().value as number);
       if (this.send(packFrame(id, captureTs, await blob.arrayBuffer()))) {
         this.inFlight.set(id, captureTs);
         this.counters.sent++;

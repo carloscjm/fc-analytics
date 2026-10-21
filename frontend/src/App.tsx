@@ -41,6 +41,7 @@ export default function App() {
   const [showIds, setShowIds] = useState(true);
   const [showView, setShowView] = useState(true);
   const [showPitch, setShowPitch] = useState(true);
+  const [autoCrop, setAutoCrop] = useState(true);
   const mapOnly = useMemo(() => new URLSearchParams(location.search).has("mapa"), []);
 
   useEffect(() => {
@@ -112,11 +113,12 @@ export default function App() {
     // Captura nova: tracking, times e bola recomeçam do zero no backend.
     client.send({ type: "reset_session" });
     const sender = new FrameSender(stream, video, (data) => client.sendBinary(data), intervalMs);
+    sender.setAutoCrop(autoCrop);
     senderRef.current = sender;
     statsRef.current.reset();
     sender.start();
     setCapturing(true);
-  }, [client, intervalMs, stopCapture, video]);
+  }, [autoCrop, client, intervalMs, stopCapture, video]);
 
   useEffect(() => () => senderRef.current?.stop(), []);
 
@@ -290,6 +292,17 @@ export default function App() {
             <input type="checkbox" checked={showPitch} onChange={(e) => setShowPitch(e.target.checked)} />
             Linhas do campo
           </label>
+          <label className="check" title="Analisa só a área do vídeo dentro da aba, ignorando o resto da página">
+            <input
+              type="checkbox"
+              checked={autoCrop}
+              onChange={(e) => {
+                setAutoCrop(e.target.checked);
+                senderRef.current?.setAutoCrop(e.target.checked);
+              }}
+            />
+            Recorte automático
+          </label>
         </div>
       </header>
 
@@ -300,7 +313,13 @@ export default function App() {
         {mapCard}
         <section className="stage">
           <video ref={setVideo} muted playsInline className="video" />
-          <DetectionOverlay video={video} result={result} showLabels={showLabels} showPitch={showPitch} />
+          <DetectionOverlay
+            video={video}
+            result={result}
+            showLabels={showLabels}
+            showPitch={showPitch}
+            crop={result && result.conn === client.conn ? (senderRef.current?.cropFor(result.frameId) ?? null) : null}
+          />
           {!capturing && (
             <div className="placeholder">
               <p>Clique em <strong>Escolher aba</strong> e selecione a aba com o jogo.</p>

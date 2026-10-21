@@ -4,7 +4,8 @@
 - As posições de cada ID são suavizadas, para o mapa não tremer.
 - Quem saiu da imagem continua no mapa, esmaecido, na última posição conhecida,
   por alguns segundos (a câmera da TV não mostra o campo inteiro). Esse "fantasma"
-  some se já houver um jogador visível do mesmo time ali perto.
+  some se aparecer um ID novo ou um jogador visível ali perto (provavelmente é o
+  mesmo jogador com outro ID). IDs que duraram menos de 1 s não viram fantasma.
 - Nos closes, replays e frames sem campo, o mapa fica pausado.
 """
 
@@ -19,8 +20,11 @@ import numpy as np
 from .pitch import LENGTH, WIDTH, apply_h
 
 POSITION_SMOOTHING = 0.6
-GHOST_SECONDS = 5.0
-GHOST_MERGE_M = 4.0
+GHOST_SECONDS = 4.0
+GHOST_MIN_LIFE = 1.0
+GHOST_MERGE_M = 5.0
+NEW_ID_TAKES_GHOST_M = 6.0
+GHOSTS_APART_M = 3.0
 OUTSIDE_MARGIN_M = 4.0
 BALL_TRAIL_SECONDS = 3.0
 
@@ -32,6 +36,7 @@ class MapPlayer:
     team: int | None
     role: str
     seen_ts: float
+    first_ts: float
 
 
 class FieldMap:
@@ -76,7 +81,12 @@ class FieldMap:
                 if prev is not None:
                     x = POSITION_SMOOTHING * x + (1 - POSITION_SMOOTHING) * prev.x
                     y = POSITION_SMOOTHING * y + (1 - POSITION_SMOOTHING) * prev.y
-                self.players[tid] = MapPlayer(float(x), float(y), box.get("t"), box["l"], ts)
+                    first = prev.first_ts
+                else:
+                    # ID novo: o fantasma mais próximo provavelmente é o mesmo jogador.
+                    self._take_ghost(float(x), float(y), ts)
+                    first = ts
+                self.players[tid] = MapPlayer(float(x), float(y), box.get("t"), box["l"], ts, first)
 
         ball = next((b for b in boxes if b["l"] == "bola"), None)
         if ball is not None:
@@ -92,8 +102,24 @@ class FieldMap:
         if self.ball_ts is not None and ts - self.ball_ts > 1.0:
             self.ball = None
 
-        for tid in [t for t, p in self.players.items() if ts - p.seen_ts > GHOST_SECONDS]:
+        for tid in [
+            t
+            for t, p in self.players.items()
+            if ts - p.seen_ts > GHOST_SECONDS
+            or (p.seen_ts != ts and p.seen_ts - p.first_ts < GHOST_MIN_LIFE)
+        ]:
             del self.players[tid]
+
+    def _take_ghost(self, x: float, y: float, ts: float) -> None:
+        best, best_d = None, NEW_ID_TAKES_GHOST_M
+        for tid, p in self.players.items():
+            if p.seen_ts == ts:
+                continue
+            d = float(np.hypot(p.x - x, p.y - y))
+            if d < best_d:
+                best, best_d = tid, d
+        if best is not None:
+            del self.players[best]
 
     @staticmethod
     def _inside(x: float, y: float) -> bool:
@@ -106,13 +132,14 @@ class FieldMap:
         out_players = []
         for tid, p in seen.items():
             out_players.append(self._player_json(tid, p, ts, ghost=False))
-        for tid, p in ghosts.items():
-            # Fantasma redundante: já há um jogador visível do mesmo time ali.
-            if any(
-                q.team == p.team and q.role == p.role and np.hypot(q.x - p.x, q.y - p.y) < GHOST_MERGE_M
-                for q in seen.values()
-            ):
+        kept: list[MapPlayer] = []
+        for tid, p in sorted(ghosts.items(), key=lambda item: -item[1].seen_ts):
+            # Fantasma redundante: já há um jogador visível (ou um fantasma mais recente) ali.
+            if any(np.hypot(q.x - p.x, q.y - p.y) < GHOST_MERGE_M for q in seen.values()):
                 continue
+            if any(np.hypot(q.x - p.x, q.y - p.y) < GHOSTS_APART_M for q in kept):
+                continue
+            kept.append(p)
             out_players.append(self._player_json(tid, p, ts, ghost=True))
         return {
             "scene": self.scene,
