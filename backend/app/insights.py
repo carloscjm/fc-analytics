@@ -149,8 +149,18 @@ def _window(w: dict[str, Any]) -> dict[str, Any]:
         "linha_defesa_m_do_proprio_gol": _pair(w["line"]),
         "distancia_defesa_ataque_m": _pair(w["depth"]),
         "largura_m": _pair(w["width"]),
-        "corredor_da_bola_no_ataque_pct": corridors,
+        "por_onde_ataca_pct": corridors,
     }
+
+
+def _recent_window(w: dict[str, Any]) -> dict[str, Any]:
+    """Com pouco jogo analisado nos últimos 5 min, os números enganam: o modelo recebe só um aviso."""
+    if w["seconds"] < MIN_RECENT_SECONDS:
+        return {
+            "minutos_de_jogo_analisados": round(w["seconds"] / 60, 1),
+            "aviso": "pouco jogo analisado nos últimos 5 minutos; não tire conclusões desta janela, use a partida inteira",
+        }
+    return _window(w)
 
 
 def build_summary(stats: dict[str, Any], patterns: dict[str, Any] | None, alerts: list[str]) -> dict[str, Any]:
@@ -177,7 +187,7 @@ def build_summary(stats: dict[str, Any], patterns: dict[str, Any] | None, alerts
         "tempo": f"{stats['period']}º tempo",
         "placar": f"{TEAM[0]} {stats['score'][0]} x {stats['score'][1]} {TEAM[1]}",
         "eventos": events,
-        "ultimos_5_minutos": _window(stats["windows"]["recentes"]),
+        "ultimos_5_minutos": _recent_window(stats["windows"]["recentes"]),
         "partida_inteira": _window(stats["windows"]["partida"]),
         "padroes": formations,
         "alertas_recentes": alerts[-6:],
@@ -188,7 +198,17 @@ SYSTEM_PROMPT = (
     "Você é um analista tático de futebol. Recebe números aproximados, medidos por visão computacional numa "
     "transmissão de TV (a câmera não mostra o campo todo). Escreva em português do Brasil, com frases curtas e "
     "concretas. Use só o que está nos dados, cite números quando ajudarem e não invente jogadores, nomes ou "
-    "lances. Os times se chamam Time A e Time B. Esquerda e direita são do ponto de vista do time que ataca."
+    "lances. Os times se chamam Time A e Time B. Esquerda e direita são do ponto de vista do time que ataca.\n"
+    "Significado dos campos:\n"
+    "- posse_pct: quanto tempo cada time ficou com a bola.\n"
+    "- dominio_territorial_pct: quanto tempo a bola ficou no terço ofensivo de cada time.\n"
+    "- linha_defesa_m_do_proprio_gol: distância da defesa até o próprio gol; maior = linha mais alta, menor = bloco baixo.\n"
+    "- distancia_defesa_ataque_m: distância entre o último defensor e o atacante mais avançado; maior = time mais "
+    "espaçado, menor = time compacto.\n"
+    "- largura_m: distância entre os jogadores mais abertos; maior = time mais aberto.\n"
+    "- por_onde_ataca_pct: por qual lado a bola anda quando o time ataca. NÃO é espaço deixado.\n"
+    "- recupera_em_5s_pct: em quantas perdas de bola o time recuperou em até 5 segundos.\n"
+    "Se uma janela tiver um aviso, não use os números dela."
 )
 
 USER_PROMPT = (
@@ -196,9 +216,11 @@ USER_PROMPT = (
     "Responda só com JSON, com estes campos:\n"
     "- leitura: 2 a 3 frases sobre o momento do jogo nos últimos minutos, comparando com a partida inteira.\n"
     "- funcionando: até 3 itens, cada um dizendo o que está dando certo e para qual time.\n"
-    "- espacos: até 3 itens, cada um dizendo onde um time deixa espaço e como o outro pode explorar.\n"
+    "- espacos: até 3 itens, cada um dizendo onde um time deixa espaço (por exemplo linha alta = espaço nas costas, "
+    "time espaçado = meio aberto, ataque sempre pelo mesmo lado = o outro lado livre) e como o outro pode explorar.\n"
     "- sugestoes: até 3 dicas práticas, cada uma dizendo para qual time (por exemplo trocar o lado do ataque, "
-    "baixar ou subir o bloco, pressionar mais depois de perder a bola)."
+    "baixar ou subir o bloco, pressionar mais depois de perder a bola).\n"
+    "Cada item deve ter uma frase só, sem repetir o mesmo número em itens diferentes e sem dicas que se contradizem."
 )
 
 RESPONSE_SCHEMA = {

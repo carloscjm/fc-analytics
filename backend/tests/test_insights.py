@@ -92,6 +92,10 @@ def test_summary_for_the_llm_is_readable():
     assert summary["padroes"]["Time A atacando"]["formacao"] == "4-3-3"
     assert summary["ultimos_5_minutos"]["posse_pct"] == {"Time A": 50, "Time B": 50}
     json.dumps(summary, ensure_ascii=False)
+    # Pouco jogo nos últimos 5 min: só um aviso, para o modelo não tirar conclusões de 10 segundos.
+    short = build_summary(stats(window(seconds=10.0)), None, [])
+    assert "aviso" in short["ultimos_5_minutos"] and "posse_pct" not in short["ultimos_5_minutos"]
+    assert "posse_pct" in short["partida_inteira"]
 
 
 class FakeOllama:
