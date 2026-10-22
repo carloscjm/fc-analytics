@@ -29,3 +29,6 @@ launcher/bin/
 launcher/obj/
 publish/
 Releases/
+
+# Previews de tela (tools/preview)
+tools/preview/out/

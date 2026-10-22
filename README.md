@@ -2,13 +2,18 @@
 
 Analisador de futebol ao vivo que roda 100% no seu PC. Ele captura a aba do navegador com o jogo, detecta jogadores e bola, projeta tudo num mapa 3D visto de cima e gera estatísticas e insights em tempo real, sem nenhum serviço pago.
 
-**Status:** Fase 5 (insights e dicas). Além dos padrões de ataque e defesa e das estatísticas da partida, o app mostra alertas táticos na hora e, a cada 3 a 5 minutos, uma análise escrita por um LLM que roda no próprio PC (Ollama).
+**Status:** versão em uso, com padrões de ataque e defesa, movimentação animada, leitura tática, estatísticas, alertas, análise por um LLM que roda no próprio PC (Ollama), partida com pausas e relatório exportável, e app de instalação para Windows.
+
+**Documentação técnica:** [`docs/`](docs/README.md). Agentes de IA: leiam o [`AGENTS.md`](AGENTS.md) primeiro.
 
 ## Estrutura
 
 ```
 backend/    Python + FastAPI: pipeline de análise (detecção, tracking, campo, estatísticas, insights)
 frontend/   React + Vite + TypeScript: captura da aba, mapa 3D e painéis
+launcher/   app de controle do Windows (.NET 8 + Velopack): instala, inicia e atualiza
+docs/       documentação técnica
+tools/      previews das telas com uma partida de exemplo
 instalar-ferramentas.bat  instala Python, Node.js, Git e Ollama pelo winget (Windows)
 instalar.bat              instala as dependências do projeto (Windows)
 iniciar.bat               abre backend, frontend e o navegador (Windows)
@@ -75,12 +80,12 @@ Hardware de referência: RTX 4060 8 GB (cenário A do planejamento).
 
 ## Padrões dos times (como cada um ataca e defende)
 
-O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time em 6 opções: **Time A ataca**, **Time A defende**, **Time B ataca**, **Time B defende** e as duas combinadas, **A ataca × B defende** e **B ataca × A defende**. Nas combinadas, os dois padrões vêm dos mesmos momentos do jogo: o time que ataca vai para a direita e o que defende aparece girado, defendendo o gol da direita.
+O campo 3D não mostra o jogo ao vivo. Ele resume o comportamento de cada time em 8 opções: **Time A ataca**, **Time A defende**, **Time B ataca**, **Time B defende**, as duas combinadas, **A ataca × B defende** e **B ataca × A defende** (só os jogadores, sem as linhas da formação), e **defesa → ataque** de cada time. Nas combinadas, os dois padrões vêm dos mesmos momentos do jogo: o time que ataca vai para a direita e o que defende aparece girado, defendendo o gol da direita.
 
 - **Quem ataca:** em cada momento, o time do jogador mais perto da bola (até 4 m) está atacando. Sem bola visível, vale o time mais avançado em direção ao gol adversário. A posse vale por até 3 s depois da última vez que a bola foi vista.
 - **Lado de cada time:** vem da posição dos goleiros (peso maior) e de onde cada time fica, com memória de cerca de 2 minutos; por isso os padrões continuam corretos depois da troca de lado no intervalo.
 - **Normalização:** as posições são giradas para cada time aparecer sempre atacando da esquerda para a direita. Esquerda e direita são do ponto de vista do time.
-- **Linha de defesa contada:** em cada quadro em que a câmera mostra o campo de lado a lado na altura da defesa, o app conta quantos jogadores (sem o goleiro) estão a até 7 m do defensor mais recuado. Com pelo menos 30 contagens e uma delas em 45% ou mais dos lances, esse número (3, 4 ou 5) define quantos zagueiros a formação tem. O painel mostra a contagem, por exemplo "3 atrás em 72% de 140 lances".
+- **Linha de defesa contada:** em cada quadro em que a câmera mostra o campo de lado a lado na altura da defesa, o app conta quantos jogadores (sem o goleiro) estão a até 5 m do defensor mais recuado, ocupando pelo menos 22 m de largura. Com pelo menos 30 contagens e uma delas em 45% ou mais dos lances, esse número (3, 4 ou 5) define quantos zagueiros a formação tem. O painel mostra a contagem, por exemplo "3 atrás em 72% de 140 lances".
 - **Corrigir a formação:** cada formação no painel tem um seletor; escolhendo uma (por exemplo 3-4-3), as posições, os nomes e as setas de defesa → ataque são refeitos com ela. A escolha fica salva com a partida e continua depois de "Zerar padrões"; **Automática** volta ao normal.
 - **Formação:** as posições de cada time em cada fase são agrupadas em 10 posições médias (k-means com vários recomeços). Elas são separadas em linhas pela profundidade e comparadas com as formações que existem (4-4-2, 4-3-3, 4-2-3-1, 3-5-2, 5-3-2 e outras); fica a que encaixa melhor, com preferência pelas mais comuns quando as posições estão confusas.
 - **Números:** altura média da linha de defesa (bloco baixo abaixo de 30 m do próprio gol, médio até 42 m, alto acima), largura, profundidade da defesa ao ataque, corredor preferido no último terço e mapa de calor.
@@ -141,7 +146,7 @@ As mudanças, o chuveirinho (5 ou mais cruzamentos em 10 minutos, o dobro das en
 
 ## Estatísticas da partida (Fase 4)
 
-- **Gravação:** cada momento de jogo em tomada aberta vai para `backend/data/partidas.sqlite` (posições de todos os jogadores, bola, medidas do momento, passes, perdas e eventos). Se o backend reiniciar, a partida continua de onde parou. Depois de 4 horas sem jogo, começa uma partida nova sozinha; o botão **Nova partida** zera na hora (estatísticas, eventos e padrões).
+- **Gravação:** cada momento de jogo em tomada aberta vai para `backend/data/partidas.sqlite` (posições de todos os jogadores, bola, medidas do momento, passes, perdas e eventos). Se o backend reiniciar, a partida continua de onde parou. Depois de 4 horas sem jogo, começa uma partida nova sozinha; o botão **Criar partida** no cabeçalho começa uma nova na hora (estatísticas, eventos e padrões). No app do Windows, o banco fica na pasta das partidas escolhida.
 - **Janelas:** **Últimos 5 min** e **Partida inteira**, recalculadas a cada 3 s.
 - **Métricas:** posse de bola (time do jogador mais perto da bola, até 4 m), domínio territorial (tempo com a bola no terço ofensivo), passes aproximados e precisão (bola trocando entre jogadores do mesmo time), perdas de bola, pressão pós-perda (jogadores a até 5 m da bola nos 5 s seguintes e quantas vezes recupera), altura da linha de defesa, compactação, largura, corredor da bola no ataque e distância percorrida por quem aparece na imagem.
 - **Gráficos (ECharts):** posse por minuto e altura da linha de defesa por minuto, com os eventos marcados.
@@ -155,7 +160,7 @@ As mudanças, o chuveirinho (5 ou mais cruzamentos em 10 minutos, o dobro das en
   | S | substituição | substituição |
 
   **I** marca o intervalo (a coleta pausa) e, apertado de novo, o começo do 2º tempo. **Z** desfaz o último evento. Os mesmos eventos têm botões no painel.
-- **Limites:** o relógio é o do app (começa quando a partida começa no app, não o do jogo). Passes, pressão e distância dependem do que aparece na imagem e são aproximados; a distância fica bem abaixo da real.
+- **Limites:** o relógio é o do app (começa quando a partida é criada e não conta as pausas), não o do jogo. Passes, pressão e distância dependem do que aparece na imagem e são aproximados; a distância fica bem abaixo da real.
 - **Apagar dados:** o link **Apagar dados** no painel da partida mostra quanto espaço o banco ocupa e, depois de confirmar, apaga todas as partidas gravadas (posições, estatísticas, eventos, padrões, alertas e análises) e devolve o espaço ao disco. Os modelos baixados e as configurações continuam.
 - **Diagnóstico:** `localhost:8000/debug/stats`.
 
