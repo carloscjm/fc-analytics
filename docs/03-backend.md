@@ -144,7 +144,19 @@ Constantes principais: `POSSESSION_RADIUS_M = 4`, `POSSESSION_CONFIRM_FRAMES = 2
 
 ### `report.py`: relatório HTML
 
-`build_report(stats, patterns, insights, colors, version)` devolve uma página HTML única (CSS embutido, campinhos e gráfico de posse em SVG). `vivid(color)` deixa a cor da camisa mais saturada; a mesma regra existe no frontend (`colors.ts`).
+`build_report(stats, patterns, insights, colors, version)` devolve uma página HTML única (CSS embutido, campinhos e gráfico de posse em SVG). Usa `Story` para o placar (oficial quando houver), o **Resumo final** e a tabela **Oficial × o que a câmera mediu** (`_official_section`), e inclui os cards do Instagram em SVG, com as fontes declaradas uma vez na página (`<style id="fca-fonts">`) e um script (`CARDS_JS`) que gera os PNG no navegador. `vivid(color)` deixa a cor da camisa mais saturada; a mesma regra existe no frontend (`colors.ts`).
+
+### `official.py`: dados oficiais (ESPN)
+
+Busca o jogo na API pública do site da ESPN (`site.api.espn.com/apis/site/v2/sports/soccer/all`, sem chave e não documentada; tudo é tolerante a campos faltando). `search(names, match_name, started, query, date)` lê o `scoreboard` do dia da partida (e dos vizinhos, se não achar) e pontua cada jogo com `team_score` (sigla ou palavra igual = 1,0; prefixo, como "bay" → "bayern" = 0,8); devolve até 6 candidatos com pontuação ≥ 0,8, o melhor primeiro. `fetch_summary(event_id)` + `parse_summary` leem o `summary` do jogo: times (casa/fora, placar, cor), estatísticas (`STATS`: posse, chutes, no alvo, escanteios, faltas, cartões, impedimentos, defesas, passes, cruzamentos), gols (minuto, autor, assistência, pênalti, contra) e cartões. `assign(official, names)` decide qual time oficial é o Time A (pelas siglas); `ordered(official)` reordena tudo pelo `order` gravado. `fetch` é injetável (os testes usam as fixtures em `tests/fixtures/espn_*.json`).
+
+### `story.py`: a história da partida
+
+`Story(stats, patterns, insights)` junta os dados oficiais (quando houver) com a análise por vídeo e escolhe, **por regras**, o que contar; os textos saem prontos, com os números certos, sem LLM. Números: `score`, `possession` (oficiais primeiro). Destaques candidatos por time, cada um com uma pontuação: `fullbacks` (lateral sobe 20 m ou mais), `low_block` (última linha vira de 5 no bloco baixo), `build_up` (saída com 3 em 40%+ das saídas), `attack_style` (cruzamentos e finalizações oficiais + entradas na área e cortes para dentro medidos), `lines` (diferença de 8 m+ na altura das defesas). `build()` monta a lista de cards (capa, gols, quem mandou, um destaque de cada time sem repetir o tipo, estilo de ataque, linhas, conclusões com a nota sobre as fontes); `comparison()` dá as linhas da tabela oficial × medido; `summary()` dá os parágrafos do resumo final. Regra de texto: nome do time sem artigo, e todo parágrafo diz de qual time fala.
+
+### `cards.py`: cards do Instagram
+
+`build_cards(stats, patterns, insights, embed_fonts=True)` desenha cada card de `Story.build()` em SVG 1080 × 1350 com a mesma identidade (gramado listrado, moldura, Anton/Barlow Condensed/Inter, campinho vertical com o time atacando para cima: `rot(x, y) = (y, 105 − x)`). O SVG não quebra linhas: `wrap`/`text_block` quebram com as larguras reais das fontes (`assets/fonts/metrics.json`, gerado por `tools/fonts/metrics.py`) e pintam os nomes dos times com a cor da camisa (`card_colors`: `vivid`, clareada se ficar escura demais no verde). `font_css(embed)` gera os `@font-face` em base64. Um renderizador por tipo (`RENDER`). Para adicionar um tipo: um candidato em `story.py` e uma função `_tipo(canvas, spec, names, colors)` aqui.
 
 ### `check_env.py`
 

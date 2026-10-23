@@ -179,6 +179,19 @@ li { margin: 2px 0; }
 .insight { border-left: 3px solid var(--border); padding: 4px 0 4px 12px; margin: 10px 0; }
 .insight.atencao { border-color: #e0a100; }
 .foot { margin-top: 32px; font-size: 13px; }
+.source { display:inline-block; font-size:12px; font-weight:600; padding:2px 8px; border-radius:99px; background:#e3efe6; color:#1d5b33; vertical-align:middle; }
+.source.warn { background:#fdf0d5; color:#7a5200; }
+.summary p { margin: 0 0 10px; }
+.summary p:last-child { margin-bottom: 0; }
+table.compare td.ours, table.compare th.ours { color: var(--muted); }
+.cards { display:grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+@media (max-width: 720px) { .cards { grid-template-columns: 1fr 1fr; } }
+.cards figure { margin:0; }
+.cards figure > svg { width:100%; height:auto; display:block; border-radius:8px; box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+.cards figcaption { display:flex; justify-content:space-between; align-items:center; margin-top:6px; font-size:13px; }
+button.dl { font: inherit; font-size: 13px; font-weight:600; border:1px solid var(--border); background:var(--card); border-radius:8px; padding:5px 10px; cursor:pointer; }
+button.dl:hover { border-color: var(--muted); }
+@media print { .cards, .cards-actions { display:none; } }
 @media print { body { background:#fff; } .card { break-inside: avoid; } }
 """
 
@@ -293,6 +306,104 @@ def _insights_section(items: list[dict[str, Any]], names: list[str]) -> str:
     return "".join(out)
 
 
+def _official_section(story: Any, names: list[str], pal: tuple[str, str]) -> str:
+    off = story.off
+    if not off:
+        return (
+            '<h2>Dados oficiais</h2><div class="card"><p><span class="source warn">Não conferido</span> '
+            "O placar e as contagens abaixo vêm só da análise por vídeo. Para usar os dados oficiais, finalize a partida "
+            "pelo painel e confirme o jogo na lista.</p></div>"
+        )
+    goals = off.get("goals") or []
+    goal_rows = "".join(
+        f"<tr><td>{escape(g.get('minute') or '')}</td><td>{_team_header(names[g['team']], pal[g['team']]) if g.get('team') in (0, 1) else ''}</td>"
+        f"<td>{escape(g.get('player') or '')}{' (pênalti)' if g.get('penalty') else ''}{' (gol contra)' if g.get('ownGoal') else ''}</td>"
+        f"<td class=\"muted\">{escape(g.get('assist') or '')}</td></tr>"
+        for g in goals
+    )
+    cards = off.get("cards") or []
+    card_rows = "".join(
+        f"<tr><td>{escape(c.get('minute') or '')}</td><td>{_team_header(names[c['team']], pal[c['team']]) if c.get('team') in (0, 1) else ''}</td>"
+        f"<td>{escape(c.get('player') or '')}</td><td>{escape(c.get('kind') or '')}</td></tr>"
+        for c in cards
+    )
+    head = (
+        f'<tr><th></th><th class="n">{_team_header(names[0], pal[0])}</th><th class="n">{_team_header(names[1], pal[1])}</th>'
+        f'<th class="n ours">{escape(names[0])} (vídeo)</th><th class="n ours">{escape(names[1])} (vídeo)</th></tr>'
+    )
+    rows = "".join(
+        f'<tr><td>{escape(label)}</td><td class="n">{a}</td><td class="n">{b}</td><td class="n ours">{c}</td><td class="n ours">{d}</td></tr>'
+        for label, a, b, c, d in story.comparison()
+    )
+    place = " · ".join(p for p in (off.get("league"), off.get("venue")) if p)
+    return f"""<h2>Dados oficiais <span class="source">Fonte: {escape(off.get("source") or "")}</span></h2>
+<div class="card">
+<p class="muted">{escape(place)}</p>
+<h3>Gols</h3>
+{f'<table><tr><th>Minuto</th><th>Time</th><th>Autor</th><th>Assistência</th></tr>{goal_rows}</table>' if goals else '<p class="muted">Sem gols.</p>'}
+{f'<h3>Cartões</h3><table><tr><th>Minuto</th><th>Time</th><th>Jogador</th><th>Cartão</th></tr>{card_rows}</table>' if cards else ''}
+<h3>Oficial × o que a câmera mediu</h3>
+<table class="compare">{head}{rows}</table>
+<p class="muted">A câmera só conta o que aparece na transmissão ({story.minutes} minutos analisados), por isso as contagens
+de passes, finalizações e cruzamentos ficam abaixo das oficiais. No relatório e nos cards valem os números oficiais;
+a análise por vídeo entra na parte tática (formação, linhas, laterais, saída de bola).</p>
+</div>"""
+
+
+CARDS_JS = """
+(function () {
+  var fonts = document.getElementById('fca-fonts').textContent;
+  var slug = document.body.getAttribute('data-slug') || 'partida';
+  function png(svg) {
+    var clone = svg.cloneNode(true);
+    var style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    style.textContent = fonts;
+    clone.insertBefore(style, clone.firstChild);
+    clone.setAttribute('width', '1080');
+    clone.setAttribute('height', '1350');
+    var xml = new XMLSerializer().serializeToString(clone);
+    var img = new Image();
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+    return img.decode().then(function () {
+      return new Promise(function (ok) { setTimeout(ok, 150); });
+    }).then(function () {
+      var canvas = document.createElement('canvas');
+      canvas.width = 1080; canvas.height = 1350;
+      canvas.getContext('2d').drawImage(img, 0, 0, 1080, 1350);
+      return new Promise(function (ok) { canvas.toBlob(ok, 'image/png'); });
+    });
+  }
+  function save(blob, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+  }
+  function one(i) {
+    var svg = document.querySelector('#card-' + i + ' svg');
+    return png(svg).then(function (blob) { save(blob, slug + '-card-' + String(i).padStart(2, '0') + '.png'); });
+  }
+  document.querySelectorAll('button[data-card]').forEach(function (b) {
+    b.addEventListener('click', function () { one(Number(b.getAttribute('data-card'))); });
+  });
+  var all = document.getElementById('cards-all');
+  if (all) all.addEventListener('click', function () {
+    var n = document.querySelectorAll('.cards figure').length, chain = Promise.resolve();
+    for (var i = 1; i <= n; i++) (function (k) { chain = chain.then(function () { return one(k); }); })(i);
+  });
+})();
+"""
+
+
+def _slug(text: str) -> str:
+    import re
+    import unicodedata
+
+    plain = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "-", plain).strip("-")[:60] or "partida"
+
+
 def build_report(
     stats: dict[str, Any],
     patterns: dict[str, Any] | None,
@@ -300,16 +411,31 @@ def build_report(
     colors: list[str] | None,
     version: str,
 ) -> str:
-    names = list(stats.get("teamNames") or ["Time A", "Time B"])
+    from .cards import build_cards, font_css
+    from .story import Story, team_names
+
+    story = Story(stats, patterns, insights)
+    names = team_names(stats)
     pal = (
         vivid((colors or [None, None])[0], DEFAULT_COLORS[0]),
         vivid((colors or [None, None])[1], DEFAULT_COLORS[1]),
     )
     title = stats.get("matchName") or f"{names[0]} x {names[1]}"
-    started = time.localtime((stats.get("startedAt") or 0) / 1000)
-    when = time.strftime("%d/%m/%Y às %H:%M", started)
+    started_s = (stats.get("startedAt") or 0) / 1000
+    when = time.strftime("%d/%m/%Y às %H:%M", time.localtime(started_s)) if started_s else "Data não registrada"
     state = STATE_NAMES.get(stats.get("matchState") or "", "")
-    score = stats.get("score") or [0, 0]
+    score = story.score or stats.get("score") or [0, 0]
+    score_note = (
+        f'<span class="source">Placar oficial · {escape(story.off.get("source") or "")}</span>' if story.off
+        else '<span class="source warn">Placar marcado no app (não conferido)</span>'
+    )
+    summary_html = "".join(f"<p>{escape(p)}</p>" for p in story.summary())
+    card_svgs = build_cards(stats, patterns, insights, embed_fonts=False, story=story)
+    cards_html = "".join(
+        f'<figure id="card-{i}">{svg}<figcaption><span class="muted">{i}/{len(card_svgs)}</span>'
+        f'<button class="dl" data-card="{i}">Baixar imagem</button></figcaption></figure>'
+        for i, svg in enumerate(card_svgs, 1)
+    )
     whole = (stats.get("windows") or {}).get("partida") or {}
 
     events = [e for e in stats.get("events") or [] if e.get("kind") != "intervalo"]
@@ -342,15 +468,22 @@ def build_report(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(title)} · Relatório FC Analytics</title>
 <style>{CSS}</style>
+<style id="fca-fonts">{font_css(True)}</style>
 </head>
-<body>
+<body data-slug="{escape(_slug(title))}">
 <main>
 <p class="muted">Relatório FC Analytics · partida {escape(state)}</p>
 <h1>{escape(title)}</h1>
 <p class="muted">{when} · {_mmss(stats.get("elapsedS"))} de jogo analisado (sem contar as pausas)</p>
 <div class="score">{_team_header(names[0], pal[0])} {score[0]} × {score[1]} {_team_header(names[1], pal[1])}</div>
+<p>{score_note}</p>
 
-<h2>Eventos</h2>
+<h2>Resumo final</h2>
+<div class="card summary">{summary_html or '<p class="muted">Pouco jogo analisado para um resumo.</p>'}</div>
+
+{_official_section(story, names, pal)}
+
+<h2>Eventos marcados no app</h2>
 <div class="card">{events_html}{('<h3>Pausas da captura</h3>' + pauses_html) if pauses_html else ''}</div>
 
 <h2>Estatísticas da partida</h2>
@@ -368,6 +501,13 @@ def build_report(
 <h2>Alertas e análises</h2>
 <div class="card">{_insights_section(insights, names)}</div>
 
+<h2>Cards para o Instagram</h2>
+<div class="card">
+<p class="muted cards-actions">Carrossel vertical (1080 × 1350) com o resumo da partida, para postar como está.
+<button class="dl" id="cards-all">Baixar todos</button></p>
+<div class="cards">{cards_html}</div>
+</div>
+
 <p class="foot muted">
 Gerado pelo FC Analytics {escape(version)} em {generated}. Os números vêm do que a câmera da transmissão mostrou:
 posições são médias de quem ocupa cada região, a posse só conta quando a bola aparece, e passes e cruzamentos
@@ -375,6 +515,7 @@ dependem de a bola estar visível. Nos campinhos, o time ataca da esquerda para 
 que mais se repetiram e as amarelas, os cruzamentos.
 </p>
 </main>
+<script>{CARDS_JS}</script>
 </body>
 </html>
 """

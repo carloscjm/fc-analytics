@@ -19,6 +19,8 @@ import { MatchPanel, formatBytes, type Command } from "./MatchPanel";
 import { TacticsPanel } from "./TacticsPanel";
 import { FlowPitch, type FlowLayer } from "./FlowPitch";
 import { MatchControls } from "./MatchControls";
+import { OfficialDialog } from "./OfficialDialog";
+import { CardsDialog } from "./CardsDialog";
 import { vivid } from "./colors";
 import {
   ensureWritable,
@@ -466,16 +468,29 @@ export default function App() {
     else await startCapture();
   }, [client, startCapture, startSending]);
 
+  const [officialMode, setOfficialMode] = useState<"finish" | "edit" | null>(null);
+  const [cardsOpen, setCardsOpen] = useState(false);
+  const finishWritable = useRef(false);
+
+  /** Finaliza: para a captura, confere os dados oficiais (janela) e só depois grava o relatório. */
   const finishMatch = useCallback(async () => {
-    const writable = await ensureWritable(reportHandle);
-    setMatchBusy("Fechando o relatório...");
+    finishWritable.current = await ensureWritable(reportHandle);
+    setMatchBusy("Conferindo os dados oficiais...");
     stopCapture();
     client.send({ type: "finish_match" });
     // O backend grava o fim da partida antes de montar o relatório.
     await new Promise((r) => window.setTimeout(r, 800));
-    await saveReport(writable, "Partida finalizada.");
+    setOfficialMode("finish");
+  }, [client, reportHandle, stopCapture]);
+
+  const officialDone = useCallback(async () => {
+    const mode = officialMode;
+    setOfficialMode(null);
+    if (mode !== "finish") return;
+    setMatchBusy("Fechando o relatório...");
+    await saveReport(finishWritable.current, "Partida finalizada.");
     setMatchBusy(null);
-  }, [client, reportHandle, saveReport, stopCapture]);
+  }, [officialMode, saveReport]);
 
   const exportAgain = useCallback(async () => {
     const writable = await ensureWritable(reportHandle);
@@ -818,7 +833,28 @@ export default function App() {
             onResume={() => void resumeMatch()}
             onFinish={() => void finishMatch()}
             onExport={() => void exportAgain()}
+            onOfficial={() => setOfficialMode("edit")}
+            onCards={() => setCardsOpen(true)}
           />
+          {officialMode && (
+            <OfficialDialog
+              client={client}
+              stats={matchStats}
+              names={names}
+              colors={colors}
+              mode={officialMode}
+              onDone={() => void officialDone()}
+              onClose={() => setOfficialMode(null)}
+            />
+          )}
+          {cardsOpen && (
+            <CardsDialog
+              title={reportTitle}
+              hasOfficial={!!matchStats?.official}
+              onClose={() => setCardsOpen(false)}
+              onNotice={setNotice}
+            />
+          )}
           <label>
             Intervalo
             <select value={intervalMs} onChange={(e) => changeInterval(Number(e.target.value))}>

@@ -57,6 +57,7 @@ CREATE TABLE match_meta (match_id INTEGER NOT NULL, key TEXT NOT NULL, value TEX
 | `formations` | `{"0-ataque": "3-4-3", ...}` formações escolhidas à mão | `Pipeline.set_formation` |
 | `team_names` | `{"names": [a, b], "anchors": [cor a, cor b], "source": "placar" | "manual"}` | `Pipeline._update_names` / `set_team_names` |
 | `colors` | `[cor do time A, cor do time B]` da calibração | `Pipeline._match_colors` |
+| `official` | resumo oficial da ESPN (`parse_summary`) + `order` (qual time oficial é o A e qual é o B) | `Pipeline.official_confirm` / `official_swap` / `official_clear` |
 
 ### Espaço em disco
 
@@ -90,4 +91,4 @@ stateDiagram-v2
 
 ## Formato do relatório
 
-`backend/app/report.py`. Uma página HTML sem dependências externas (CSS embutido, SVG desenhado no servidor), em português, que abre offline e imprime em PDF. Seções: cabeçalho (nome, data, tempo analisado, placar com as cores), eventos e pausas, tabela de estatísticas da partida, posse minuto a minuto (barras empilhadas), uma seção por time (padrão atacando com as setas de passes e cruzamentos repetidos, padrão defendendo, movimentação de cada fase, posições, saída de bola, jogadas, defesa → ataque, mudanças), alertas e análises do LLM, e uma nota sobre a precisão.
+`backend/app/report.py`. Uma página HTML sem dependências externas (CSS embutido, SVG desenhado no servidor), em português, que abre offline e imprime em PDF. Seções: cabeçalho (nome, data, tempo analisado, placar com as cores, oficial ou "não conferido"), resumo final (`Story.summary()`), dados oficiais (gols, cartões e a tabela oficial × medido; sem eles, um aviso), eventos marcados no app e pausas, tabela de estatísticas da partida, posse minuto a minuto (barras empilhadas), uma seção por time (padrão atacando com as setas de passes e cruzamentos repetidos, padrão defendendo, movimentação de cada fase, posições, saída de bola, jogadas, defesa → ataque, mudanças), alertas e análises do LLM, os cards do Instagram (SVG inline, com botões que geram os PNG no navegador) e uma nota sobre a precisão. As fontes dos cards vão embutidas uma vez (cerca de 150 KB), então o relatório continua abrindo offline.

@@ -100,9 +100,25 @@ Os botões da partida ficam no cabeçalho do painel:
 1. **Criar partida:** dê um nome (ou deixe em branco para usar as siglas do placar) e escolha a pasta e o nome do arquivo do relatório. Tudo o que for capturado a partir daí vai para essa partida.
 2. **Escolher aba:** selecione a aba com o jogo.
 3. **Pausar captura / Retomar captura:** para o intervalo ou qualquer parada. Retoma de onde parou, quantas vezes for preciso; o tempo pausado não conta no relógio da partida. A cada pausa o relatório é gravado no arquivo escolhido.
-4. **Finalizar partida:** para a captura de vez e grava o relatório final. **Salvar relatório de novo** grava outra vez depois.
+4. **Finalizar partida:** para a captura de vez, abre a conferência dos **dados oficiais** (abaixo) e grava o relatório final. **Salvar relatório de novo** grava outra vez depois.
 
-O relatório é uma página HTML única (abre em qualquer navegador e imprime em PDF) com placar e eventos, estatísticas da partida, posse minuto a minuto, formação e posições médias de cada time atacando e defendendo, os passes e cruzamentos que mais se repetiram, a leitura tática, a movimentação e os alertas e análises do LLM. Se o navegador não deixar escolher o arquivo, ele vai para a pasta de downloads.
+### Dados oficiais
+
+A câmera acerta bem a posse e a parte tática, mas não sabe o placar (só os gols marcados à mão) e conta menos passes, finalizações e cruzamentos do que houve, porque a transmissão não mostra tudo. Por isso, ao finalizar, o app procura o jogo numa fonte pública e gratuita (o site da ESPN, sem cadastro nem chave):
+
+1. Aparece a lista dos jogos do dia que combinam com as siglas do placar e o nome da partida. Clique no jogo certo. Se não aparecer, procure pelo nome dos times e pela data.
+2. Confira se cada time ficou com a camisa certa. Se estiver trocado, clique em **Trocar os times**.
+3. **Está certo, salvar relatório.** Ou **Salvar sem dados oficiais**, se não achar o jogo ou estiver sem internet.
+
+Com o jogo confirmado, o placar, os gols (minuto, autor e assistência), os cartões, a posse, as finalizações, os cruzamentos e os passes do relatório e dos cards passam a ser os oficiais; formação, linhas, laterais, saída de bola e movimentação continuam vindo da análise do vídeo. O LLM também recebe os dados oficiais e faz uma última análise. Dá para rever depois no botão **Dados oficiais** (aparece com a partida finalizada). A fonte não é oficial da ESPN para uso externo e pode mudar sem aviso: se falhar, o relatório sai como antes, marcado como "não conferido".
+
+### Cards para o Instagram
+
+O botão **Cards para o Instagram** (com a partida finalizada; durante o jogo, **Cards** mostra uma prévia) monta um carrossel vertical de 1080 × 1350 com o resumo da partida em linguagem simples: capa com o placar, os gols, quem mandou no jogo, um destaque tático de cada time com o campinho, como cada time chegou na área, a altura das defesas e o que levar do jogo. **Salvar todos numa pasta...** grava os PNG prontos para postar (ou baixa um por um, se o navegador não deixar escolher a pasta). Os mesmos cards aparecem no fim do relatório, com botões para baixar as imagens.
+
+Os textos dos cards e do resumo final são montados por regras, a partir dos números (oficiais e medidos), e não pelo LLM: assim nenhum número sai trocado.
+
+O relatório é uma página HTML única (abre em qualquer navegador e imprime em PDF) com placar, resumo final, dados oficiais ao lado do que a câmera mediu, eventos, estatísticas da partida, posse minuto a minuto, formação e posições médias de cada time atacando e defendendo, os passes e cruzamentos que mais se repetiram, a leitura tática, a movimentação, os alertas e análises do LLM e os cards do Instagram. Se o navegador não deixar escolher o arquivo, ele vai para a pasta de downloads.
 
 Se o app reiniciar no meio da partida (uma atualização, por exemplo), os padrões dos times são refeitos a partir das posições gravadas.
 
@@ -193,7 +209,7 @@ Os trechos de transmissão ficam no YouTube e são usados direto numa aba do nav
 
 ## Licenças
 
-Componentes e licenças conferidos em 20/10/2026:
+Componentes e licenças conferidos em 23/10/2026:
 
 | Componente | Licença |
 | --- | --- |
@@ -219,6 +235,8 @@ Componentes e licenças conferidos em 20/10/2026:
 | Velopack | MIT |
 | uv | MIT ou Apache 2.0 |
 | Qwen3 (pesos) | Apache 2.0 |
+| Fontes dos cards: Anton, Barlow Condensed, Inter | SIL Open Font License 1.1 (textos em `backend/app/assets/fonts/`) |
+| Dados oficiais da partida (API pública do site da ESPN) | sem licença de uso publicada; consulta pontual, para uso pessoal |
 
 Uso pessoal está liberado em todos. Se o projeto for distribuído ou virar produto usando Ultralytics YOLO, o código inteiro precisa ser publicado sob AGPL-3.0; a alternativa é trocar a detecção para RF-DETR.
 

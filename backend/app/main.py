@@ -25,7 +25,7 @@ from .protocol import FrameFormatError, parse_frame
 
 FOOTBALL_MODEL = "football-player-detection.pt"
 
-VERSION = "0.8.1"
+VERSION = "0.9.0"
 log = logging.getLogger("fc-analytics")
 
 
@@ -335,6 +335,18 @@ async def match_report() -> Response:
     return Response(html, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/cards.json")
+async def match_cards() -> dict:
+    """Cards do Instagram da partida atual (SVG 1080 × 1350). As fontes vêm uma vez em `fontCss`."""
+    from .cards import font_css
+
+    pipeline = getattr(app.state, "pipeline", None)
+    if pipeline is None:
+        return {"ready": False, "cards": []}
+    cards = await asyncio.to_thread(pipeline.cards_svg)
+    return {"ready": True, "fontCss": font_css(True), "cards": cards}
+
+
 @app.get("/debug/patterns")
 def debug_patterns() -> dict:
     pipeline = getattr(app.state, "pipeline", None)
@@ -615,6 +627,38 @@ async def handle_command(
         await broadcast(websocket.app, {"type": "stats", "stats": pipeline.latest_stats()})
         if kind in ("create_match", "finish_match"):
             await broadcast(websocket.app, {"type": "patterns", **pipeline.latest_patterns()})
+
+    elif kind == "official_search":
+        # Procura o jogo na fonte pública (ESPN). Só quem pediu recebe a lista.
+        pipeline = websocket.app.state.pipeline
+        if pipeline is None:
+            return
+        try:
+            found = await asyncio.to_thread(pipeline.official_search, data.get("query") or None, data.get("date") or None)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("busca dos dados oficiais")
+            await send(websocket, {"type": "official_candidates", "candidates": [], "error": str(exc)})
+            return
+        await send(websocket, {"type": "official_candidates", "candidates": found, "error": None if found else (
+            "Nenhum jogo encontrado. Confira a internet ou procure pelo nome dos times e pela data.")})
+
+    elif kind in ("official_confirm", "official_swap", "official_clear"):
+        pipeline = websocket.app.state.pipeline
+        if pipeline is None:
+            return
+        try:
+            if kind == "official_confirm":
+                await asyncio.to_thread(pipeline.official_confirm, str(data.get("eventId") or ""), bool(data.get("swap")))
+            elif kind == "official_swap":
+                await asyncio.to_thread(pipeline.official_swap)
+            else:
+                await asyncio.to_thread(pipeline.official_clear)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("dados oficiais")
+            await send(websocket, {"type": "error", "detail": f"Não foi possível buscar os dados oficiais: {exc}"})
+            return
+        pipeline.stats_sent = pipeline.stats_version
+        await broadcast(websocket.app, {"type": "stats", "stats": pipeline.latest_stats()})
 
     elif kind in ("event", "undo_event", "new_match"):
         pipeline = websocket.app.state.pipeline

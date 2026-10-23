@@ -17,6 +17,7 @@ flowchart LR
     Arquivo[("relatório .html<br/>arquivo escolhido")]
   end
   GitHub["GitHub Releases<br/>(instalador e atualizações)"]
+  ESPN["API pública da ESPN<br/>(dados oficiais, opcional)"]
 
   Jogo -- "getDisplayMedia" --> Painel
   Painel -- "WebSocket /ws<br/>frames JPEG + comandos" --> Backend
@@ -25,6 +26,7 @@ flowchart LR
   Backend -- "HTTP /api/chat" --> Ollama
   Backend --> DB
   Painel -- "GET /report.html<br/>File System Access API" --> Arquivo
+  Backend -- "ao finalizar: placar, gols,<br/>estatísticas oficiais" --> ESPN
   App -- "sobe/derruba uvicorn,<br/>abre o painel" --> Backend
   App -- "Velopack" --> GitHub
 ```

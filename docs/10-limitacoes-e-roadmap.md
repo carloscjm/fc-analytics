@@ -8,6 +8,7 @@
 - **Distância percorrida** fica bem abaixo da real (só quem aparece, com limites de velocidade).
 - **Formação** em jogos com o time muito espalhado pode sair estranha; a contagem da linha de defesa e a escolha manual corrigem.
 - **Relógio** é o do app (começa ao criar a partida), não o do jogo.
+- **Dados oficiais** vêm de uma API pública não documentada da ESPN: pode mudar ou sair do ar sem aviso. Se falhar, o relatório e os cards saem só com a análise do vídeo, avisando que não foram conferidos. Jogos sem cobertura da ESPN (ligas menores) não aparecem na busca.
 
 ## Dívidas técnicas conhecidas
 
@@ -22,6 +23,7 @@
 | Modelos vêm do Google Drive do roboflow/sports | `detector.py`, `pitch.py` | se o link mudar, o download quebra; considerar espelhar nos Releases (licença AGPL permite redistribuir com o código aberto) |
 | Atualizações pela API do GitHub sem token | `launcher/MainWindow.cs` | limite de 60 pedidos/hora por IP |
 | Instalador sem assinatura digital | release | aviso do SmartScreen na instalação |
+| Fonte única para os dados oficiais | `official.py` | ter uma reserva (football-data.org, gratuita com cadastro, só placar) se a ESPN mudar |
 | Licença AGPL do Ultralytics | detecção | ok para uso pessoal com código aberto; para virar produto fechado, trocar por RF-DETR (Apache 2.0) ou licença comercial |
 
 ## Ideias para as próximas fases

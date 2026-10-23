@@ -241,6 +241,38 @@ def build_summary(stats: dict[str, Any], patterns: dict[str, Any] | None, alerts
             for t, info in ((patterns or {}).get("tactics") or {}).items()
         },
         "alertas_recentes": alerts[-6:],
+        **official_summary(stats, names),
+    }
+
+
+OFFICIAL_LABELS = {
+    "posse": "posse_pct", "chutes": "finalizacoes", "chutes_no_alvo": "finalizacoes_no_alvo", "escanteios": "escanteios",
+    "faltas": "faltas", "amarelos": "cartoes_amarelos", "vermelhos": "cartoes_vermelhos", "passes": "passes",
+    "passes_certos": "passes_certos", "cruzamentos": "cruzamentos", "cruzamentos_certos": "cruzamentos_certos",
+}
+
+
+def official_summary(stats: dict[str, Any], names: tuple[str, str]) -> dict[str, Any]:
+    """Placar, gols e estatísticas oficiais (quando a pessoa confirmou o jogo na fonte pública)."""
+    off = stats.get("official")
+    if not off or len(off.get("teams") or []) != 2:
+        return {}
+    teams = off["teams"]
+    return {
+        "placar": f"{names[0]} {teams[0]['score']} x {teams[1]['score']} {names[1]} (oficial)",
+        "dados_oficiais": {
+            "fonte": off.get("source"),
+            "placar_final": f"{names[0]} {teams[0]['score']} x {teams[1]['score']} {names[1]}",
+            "gols": [
+                {"minuto": g.get("minute"), "time": names[g["team"]] if g.get("team") in (0, 1) else None,
+                 "autor": g.get("player"), "penalti": g.get("penalty")}
+                for g in off.get("goals") or []
+            ],
+            "estatisticas": {
+                names[i]: {OFFICIAL_LABELS[k]: v for k, v in (teams[i].get("stats") or {}).items() if k in OFFICIAL_LABELS}
+                for i in (0, 1)
+            },
+        }
     }
 
 
@@ -258,7 +290,10 @@ SYSTEM_PROMPT = (
     "- largura_m: distância entre os jogadores mais abertos; maior = time mais aberto.\n"
     "- por_onde_ataca_pct: por qual lado a bola anda quando o time ataca. NÃO é espaço deixado.\n"
     "- recupera_em_5s_pct: em quantas perdas de bola o time recuperou em até 5 segundos.\n"
-    "Se uma janela tiver um aviso, não use os números dela."
+    "Se uma janela tiver um aviso, não use os números dela.\n"
+    "Se houver dados_oficiais, eles valem mais que as medições do vídeo para placar, gols, cartões, posse e "
+    "contagens (finalizações, passes, cruzamentos); use as medições do vídeo para a parte tática (formação, "
+    "linha de defesa, laterais, saída de bola, por onde ataca)."
 )
 
 USER_PROMPT = (

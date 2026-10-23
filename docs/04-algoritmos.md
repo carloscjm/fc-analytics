@@ -146,6 +146,20 @@ Como cada análise é calculada, com os limiares do código. Todos os valores v�
 - **Saída** (`parse_analysis`): `leitura` (até 800 caracteres) e listas de até 3 itens (`funcionando`, `espacos`, `sugestoes`) e até 4 (`posicoes`). Vira um item `kind: "analise"` no feed.
 - **Modelo**: padrão `qwen3:4b-instruct` (2,5 GB, divide a placa de 8 GB com a detecção); `qwen3:8b` como opção de texto melhor. O painel baixa o modelo pelo `/api/pull`.
 
+## Dados oficiais e a análise combinada
+
+`official.py` e `story.py`. Ao finalizar, a página manda `official_search`; o backend lê os jogos do dia na ESPN e pontua cada um pelas siglas do placar e pelas palavras do nome da partida (sem datas, números e palavras como "x", "cl", "liga"). A pessoa escolhe o jogo (`official_confirm`); o backend baixa o resumo, liga os times aos nossos pelas siglas (empate: casa = Time A) e grava em `match_meta.official`; **Trocar os times** inverte a ligação (`official_swap`).
+
+Divisão do trabalho, quando há dados oficiais:
+
+| Vem dos dados oficiais | Vem da análise do vídeo |
+| --- | --- |
+| placar, gols (minuto, autor, assistência), cartões | formação, posições médias, linhas, largura |
+| posse, finalizações, no alvo, cruzamentos, passes, escanteios, faltas | laterais subindo, saída com 3, bloco baixo com 5, movimentação |
+| | entradas na área, cortes para dentro, bola no campo de ataque, recuperação em 5 s |
+
+Por quê: a posse medida bate com a oficial (a câmera vê a bola quase sempre), mas as contagens ficam abaixo do real porque a transmissão corta replays, closes e lances fora do quadro. No LLM, `build_summary` ganha `dados_oficiais` e o placar oficial, e o prompt manda usar os oficiais para números e o vídeo para a parte tática. Nos cards e no resumo final os textos são montados por regras (`story.py`), porque o modelo pequeno troca comparações e números.
+
 ## Nomes dos times pelo placar
 
 `teamnames.py`. A cada 6 s (até confirmar; depois a cada 60 s), em tomada aberta, os 28% de cima da imagem passam pelo RapidOCR numa thread. Os textos viram linhas (juntando pedaços com sobreposição pequena); procura duas siglas de 2 a 4 letras maiúsculas com um separador (placar no meio: "MCI 0 3 PSG") ou uma embaixo da outra, ignorando siglas de emissoras e competições (`NOT_TEAMS`). O mesmo par lido 3 vezes é confirmado. Qual sigla é de qual time: pelas cores dos retângulos ao lado das siglas, comparadas com as cores das camisas (precisa de 15 de vantagem em Lab para trocar a ordem); sem cores, a ordem do placar. Os nomes ficam presos às cores (`anchors`), então continuam certos se a calibração recomeçar. Nomes digitados (`source = "manual"`) desligam o OCR.

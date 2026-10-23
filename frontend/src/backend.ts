@@ -242,6 +242,52 @@ export interface MatchStats {
   pauses?: [number, number][];
   /** horário (ms) em que a pausa atual começou */
   pausedSince?: number | null;
+  /** dados oficiais confirmados (fonte pública), já na ordem Time A, Time B */
+  official?: OfficialInfo | null;
+}
+
+export interface OfficialTeam {
+  id: string;
+  name: string;
+  short: string;
+  abbr: string;
+  homeAway: "home" | "away";
+  score: number;
+  color: string | null;
+  stats: Record<string, number>;
+}
+
+export interface OfficialGoal {
+  minute: string | null;
+  team: 0 | 1 | null;
+  player: string | null;
+  assist: string | null;
+  penalty: boolean;
+  ownGoal: boolean;
+}
+
+export interface OfficialInfo {
+  source: string;
+  eventId: string;
+  league: string | null;
+  date: string | null;
+  venue: string | null;
+  completed: boolean;
+  teams: [OfficialTeam, OfficialTeam];
+  goals: OfficialGoal[];
+  cards: { minute: string | null; team: 0 | 1 | null; player: string | null; kind: string }[];
+}
+
+export interface OfficialCandidate {
+  eventId: string;
+  name: string;
+  date: string;
+  league: string | null;
+  status: string | null;
+  completed: boolean;
+  home: { name: string | null; abbr: string | null; score: string | null };
+  away: { name: string | null; abbr: string | null; score: string | null };
+  match: number;
 }
 
 export interface InsightAnalysis {
@@ -363,6 +409,7 @@ export type ServerMessage =
   | { type: "stats"; stats: MatchStats }
   | { type: "wiped"; freedBytes: number }
   | ({ type: "insights" } & InsightsInfo)
+  | { type: "official_candidates"; candidates: OfficialCandidate[]; error: string | null }
   | BenchmarkMessage;
 
 export const WS_URL: string =

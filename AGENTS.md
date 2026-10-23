@@ -12,7 +12,8 @@ O FC Analytics é um analisador de futebol que roda 100% no PC de quem usa, sem 
 4. acumula os padrões de cada time atacando e defendendo (formação, posições, movimentação, passes e cruzamentos repetidos, leitura tática);
 5. grava a partida no SQLite e calcula estatísticas (posse, passes, perdas, pressão, linha de defesa...);
 6. gera alertas por regra e, a cada 3 a 5 minutos, uma análise escrita por um LLM local (Ollama + Qwen3);
-7. exporta um relatório HTML da partida.
+7. ao finalizar, busca os dados oficiais do jogo (placar, gols, estatísticas) numa API pública e gratuita (ESPN), com confirmação da pessoa;
+8. exporta um relatório HTML da partida e cards para o Instagram, juntando os dados oficiais com a análise tática do vídeo.
 
 Há também um app de controle para Windows (.NET 8 + WPF + Velopack) que instala o ambiente Python, sobe o backend, abre o painel e busca atualizações nos Releases do GitHub.
 
@@ -82,6 +83,7 @@ Para rodar só os testes rápidos (sem YOLO nem WebSocket): `pytest --ignore=tes
 | `/debug/insights` | feed de alertas/análises e estado do LLM |
 | `/debug/names` | nomes dos times lidos do placar |
 | `/report.html` | relatório da partida atual |
+| `/cards.json` | cards do Instagram da partida atual (SVG) |
 
 No app do Windows, o registro do backend fica em `%LocalAppData%\FCAnalytics\runtime\logs\backend.log`.
 

@@ -33,6 +33,8 @@ Na primeira subida o backend baixa o `yolo26s.pt` (pela Ultralytics) e o `footba
 | `test_tactics.py` | saída de bola, jogadas com a bola (cruzamento, chute, condução), textos das posições, mudanças |
 | `test_stats.py` | posse, passes, perdas, pressão, janelas, eventos, retomada do SQLite, apagar dados |
 | `test_match.py` | ciclo da partida (criar, pausar, retomar, finalizar, retomada depois de reiniciar), relatório, `vivid`, `replay_patterns` |
+| `test_official.py` | dados oficiais da ESPN com as fixtures `espn_scoreboard.json`/`espn_summary.json`: busca pelas siglas, busca manual, sem internet, resumo e ordem dos times |
+| `test_story.py` | `Story` (oficial vale mais, frases dos gols, cards com e sem dados oficiais, todo parágrafo cita o time), quebra de linha dos cards, SVG válido com fontes, relatório com dados oficiais e cards (fixture `match_state.json`) |
 | `test_insights.py` | regras de alerta, tempos de espera, resumo para o LLM, parse da resposta, agendamento (Ollama falso) |
 | `test_teamnames.py` | achar o par de siglas no texto do OCR, ordem pelas cores |
 | `test_pitch.py` | pontos-chave, homografia, orientação, pontos alinhados ou inconsistentes, filtro de gramado, área visível, cortes, closes, fantasmas do mapa, goleiro longe do gol |

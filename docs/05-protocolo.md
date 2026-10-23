@@ -123,9 +123,12 @@ Gerado por `StatsTracker.summary` + `Pipeline.refresh_stats` a cada 3 s.
   "pauses": [[tempoDeJogo, duração], ...], "pausedSince": 1792584600000 | null,
   "teamNames": ["ARS", "BAR"], "teamNamesSource": "placar" | "manual" | null,
   "teamColors": ["#e05141", "#384f7c"] | null,
-  "storageBytes": 48200000
+  "storageBytes": 48200000,
+  "official": OfficialInfo | null          // dados oficiais confirmados, já na ordem Time A, Time B
 }
 ```
+
+`OfficialInfo`: `source` (`"ESPN"`), `eventId`, `league`, `date` (ISO), `venue`, `completed`, `teams` (dois: `id`, `name`, `short`, `abbr`, `homeAway`, `score`, `color`, `stats` com `posse`, `chutes`, `chutes_no_alvo`, `escanteios`, `faltas`, `amarelos`, `vermelhos`, `impedimentos`, `defesas`, `passes`, `passes_certos`, `cruzamentos`, `cruzamentos_certos`), `goals` (`minute`, `team` 0/1, `player`, `assist`, `penalty`, `ownGoal`), `cards` (`minute`, `team`, `player`, `kind` `amarelo`/`vermelho`), `order`, `fetchedAt`.
 
 `WindowStats` (pares `[time A, time B]`): `seconds`, `possession`, `possessionCoverage` (% do tempo com dono da bola), `tilt`, `line`, `depth`, `width`, `corridors` (`[esq, centro, dir]` por time), `passes`, `losses`, `passAccuracy`, `pressure`, `recoveries5s`, `distanceKm`.
 
@@ -178,6 +181,10 @@ Todos têm `type`. Os que mudam estado respondem com um `broadcast` para todas a
 | `llm_set_model` | `model` | escolhe o modelo do Ollama | (feed muda) |
 | `llm_pull` | `model` (opcional) | baixa o modelo no Ollama, com progresso em `llm.pull` | (feed muda) |
 | `llm_set_interval` | `seconds` (180/240/300) | intervalo entre análises | (feed muda) |
+| `official_search` | `query`, `date` (opcionais; `AAAA-MM-DD`) | procura o jogo na ESPN (sem `query`: pelas siglas e pelo nome da partida) | `official_candidates` só para quem pediu: `{candidates: [{eventId, name, date, league, status, completed, home: {name, abbr, score}, away: {...}, match}], error}` |
+| `official_confirm` | `eventId`, `swap` (opcional) | baixa o resumo oficial, liga os times e grava na partida; pede uma última análise ao LLM | `stats` (com `official`) |
+| `official_swap` | — | troca qual time oficial é o Time A | `stats` |
+| `official_clear` | — | remove os dados oficiais da partida | `stats` |
 
 Tipo desconhecido responde `{"type": "error", "detail": "tipo desconhecido: ..."}`.
 
@@ -187,6 +194,7 @@ Tipo desconhecido responde `{"type": "error", "detail": "tipo desconhecido: ..."
 | --- | --- |
 | `GET /health` | `{"status": "ok", "version": "0.8.1"}` (o app do Windows usa para saber se o backend subiu) |
 | `GET /report.html` | relatório HTML da partida atual (`Cache-Control: no-store`); 503 sem as bibliotecas de tracking |
+| `GET /cards.json` | `{"ready": true, "fontCss": "@font-face...", "cards": ["<svg ...>", ...]}`: cards do Instagram da partida atual (SVG sem fontes; `fontCss` traz as fontes em base64 uma vez) |
 | `GET /debug/state` | resumo do último frame (fps, tempos, times, tracking, cena, encaixe do campo, papéis, IDs) |
 | `GET /debug/snapshot.jpg` | último frame com caixas, IDs, pontos do campo e linhas projetadas |
 | `GET /debug/map.png` | mapa 2D (10 px/m) com jogadores, fantasmas, bola, rastro e área visível |

@@ -20,6 +20,9 @@ Pasta `frontend/`. React 19 + TypeScript + Vite 7, Three.js (campo 3D) e Apache 
 | `MatchPanel.tsx` | placar, eventos (botões e atalhos), nomes dos times, estatísticas, gráficos, apagar dados |
 | `InsightsPanel.tsx` | feed de alertas e análises, estado do LLM, baixar modelo, intervalo, coluna larga |
 | `MatchControls.tsx` | botões da partida no cabeçalho e a janela **Criar partida** |
+| `OfficialDialog.tsx` | janela **Dados oficiais**: busca automática, lista de jogos, busca manual por nome e data, conferência dos times (trocar, outro jogo, remover) |
+| `CardsDialog.tsx` | janela **Cards para o Instagram**: prévia dos cards (`GET /cards.json`) e salvar os PNG |
+| `cards.ts` | `fetchCards`, `cardPng` (SVG + fontes → canvas 1080 × 1350 → PNG), `saveCards` (pasta via `showDirectoryPicker` ou downloads) |
 | `reportFile.ts` | escolher o arquivo do relatório (File System Access API), lembrar por partida (IndexedDB), gravar ou baixar |
 | `colors.ts` | `vivid()`: cor da camisa mais forte para os campos |
 | `EChart.tsx` | wrapper mínimo do ECharts |
@@ -78,12 +81,15 @@ Nas opções com dois times (`duo`), o campo 3D e o campinho não desenham as li
 | `ativa`, sem captura | **Escolher aba**, **Finalizar partida** |
 | `ativa`, capturando | **Pausar captura**, **Finalizar partida** |
 | `pausada` | **Retomar captura**, **Finalizar partida** |
-| `finalizada` | **Criar partida**, **Salvar relatório de novo** |
+| `ativa` ou `pausada` | também **Cards** (prévia com o que já foi analisado) |
+| `finalizada` | **Criar partida**, **Dados oficiais** (✓ quando confirmado), **Cards para o Instagram**, **Salvar relatório de novo** |
 
 - **Criar partida**: janela com nome (opcional) e "Escolher pasta e nome..." (`showSaveFilePicker`, Chrome/Edge). O arquivo escolhido fica em `pendingHandle` até chegar o `matchId` novo; aí é guardado no IndexedDB (`fca-analytics` → `reportFiles`, chave = `matchId`) e recuperado se a página recarregar.
 - **Pausar**: pede a permissão de escrita do arquivo **antes de qualquer `await`** (precisa do gesto do clique), para o `FrameSender` mas mantém a aba compartilhada, manda `pause_match` e grava o relatório.
 - **Retomar**: manda `resume_match`; se a aba ainda está compartilhada, `startSending(stream)` (com `reset_session`); senão, pede a aba de novo.
-- **Finalizar**: dois cliques (confirmação de 4 s), permissão do arquivo, para a captura, `finish_match`, espera 800 ms e grava o relatório.
+- **Finalizar**: dois cliques (confirmação de 4 s), permissão do arquivo (guardada em `finishWritable`), para a captura, `finish_match`, espera 800 ms e abre o `OfficialDialog` no modo `finish`. Ele manda `official_search`, mostra os candidatos, manda `official_confirm` no clique e espera o `stats.official.eventId` igual ao escolhido (até 25 s) para mostrar a conferência dos times. **Está certo, salvar relatório** ou **Salvar sem dados oficiais** chamam `officialDone`, que grava o relatório. No modo `finish` clicar fora da janela não fecha (o relatório ainda não foi salvo).
+- **Dados oficiais** (partida finalizada): a mesma janela no modo `edit`; depois de mudar, use **Salvar relatório de novo**.
+- **Cards**: `CardsDialog` busca `/cards.json`, injeta o `fontCss` num `<style>` e mostra os SVG. **Salvar todos numa pasta...** pede a pasta no clique (antes de gerar as imagens) e grava `"<partida> - card 01.png"`, ...; sem `showDirectoryPicker`, baixa um por um.
 - **Gravar** (`writeReport`): `GET /report.html` e `createWritable()` no arquivo; sem arquivo ou sem permissão, baixa com `<a download>` (pasta Downloads).
 
 ## Outros painéis

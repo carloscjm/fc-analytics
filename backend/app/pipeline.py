@@ -408,6 +408,7 @@ class Pipeline:
         summary["teamNamesSource"] = self.team_names.source
         summary["storageBytes"] = self.storage_bytes()
         summary["teamColors"] = self._match_colors()
+        summary["official"] = self.official()
         self.stats_latest = summary
         self.stats_version += 1
         try:
@@ -539,6 +540,54 @@ class Pipeline:
             return list(colors)
         return store.get_meta(self.stats.match_id, "colors") if store is not None else None
 
+    # ---------- dados oficiais (conferência com a fonte pública) ----------
+
+    def official(self) -> dict[str, Any] | None:
+        """Dados oficiais confirmados para a partida atual, na ordem dos nossos times (ou None)."""
+        from .official import ordered
+
+        store = self.stats.store
+        return ordered(store.get_meta(self.stats.match_id, "official")) if store is not None else None
+
+    def official_search(self, query: str | None = None, date: str | None = None) -> list[dict[str, Any]]:
+        from .official import search
+
+        return search(self.team_labels(), self.stats.name, self.stats.started, query=query, date=date)
+
+    def official_confirm(self, event_id: str, swap: bool = False) -> dict[str, Any] | None:
+        """Busca o resumo oficial do jogo escolhido, liga os times aos nossos e grava com a partida."""
+        from .official import assign, fetch_summary
+
+        data = fetch_summary(event_id)
+        order = assign(data, self.team_labels())
+        if swap:
+            order = order[::-1]
+        data["order"] = order
+        if self.stats.store is not None:
+            self.stats.store.set_meta(self.stats.match_id, "official", data)
+        self.refresh_stats()
+        # Uma última análise do LLM, agora com o placar e as estatísticas oficiais.
+        try:
+            self.insights.analyze_now()
+        except Exception:  # noqa: BLE001
+            log.exception("análise final do LLM não começou")
+        return self.official()
+
+    def official_swap(self) -> None:
+        """Troca qual time oficial é o Time A e qual é o Time B (quando a ligação automática errou)."""
+        store = self.stats.store
+        data = store.get_meta(self.stats.match_id, "official") if store is not None else None
+        if not data:
+            return
+        data["order"] = list(reversed(data.get("order") or [0, 1]))
+        store.set_meta(self.stats.match_id, "official", data)
+        self.refresh_stats()
+
+    def official_clear(self) -> None:
+        if self.stats.store is not None:
+            self.stats.store.set_meta(self.stats.match_id, "official", None)
+        self.refresh_stats()
+
     def report_html(self, version: str) -> str:
         """Relatório da partida atual (arquivo HTML único)."""
         from .report import build_report
@@ -551,6 +600,16 @@ class Pipeline:
         with self.insights._lock:
             items = [dict(i) for i in self.insights.items]
         return build_report(stats, patterns, items, stats.get("teamColors"), version)
+
+    def cards_svg(self) -> list[str]:
+        """Cards do Instagram da partida atual, em SVG (sem as fontes embutidas)."""
+        from .cards import build_cards
+
+        stats = self.refresh_stats()
+        patterns = self.patterns.summary()
+        with self.insights._lock:
+            items = [dict(i) for i in self.insights.items]
+        return build_cards(stats, patterns, items, embed_fonts=False)
 
     def _load_names(self) -> TeamNames:
         store = self.stats.store

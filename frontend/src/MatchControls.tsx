@@ -15,6 +15,8 @@ interface Props {
   onResume: () => void;
   onFinish: () => void;
   onExport: () => void;
+  onOfficial: () => void;
+  onCards: () => void;
 }
 
 function clock(seconds: number): string {
@@ -64,8 +66,21 @@ export function MatchControls(props: Props) {
         </button>
       )}
       {state === "finalizada" && (
-        <button className="btn" onClick={props.onExport} disabled={!!busy}>
-          Salvar relatório de novo
+        <>
+          <button className="btn" onClick={props.onOfficial} disabled={!!busy || !connected}>
+            {stats?.official ? "✓ Dados oficiais" : "Dados oficiais"}
+          </button>
+          <button className="btn" onClick={props.onCards} disabled={!!busy}>
+            Cards para o Instagram
+          </button>
+          <button className="btn" onClick={props.onExport} disabled={!!busy}>
+            Salvar relatório de novo
+          </button>
+        </>
+      )}
+      {open && (
+        <button className="btn" onClick={props.onCards} disabled={!!busy} title="Prévia dos cards com o que já foi analisado">
+          Cards
         </button>
       )}
 
